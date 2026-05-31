@@ -18,7 +18,6 @@ no telemetry.
 
 ⚡ If MinerWatch is useful to your home rig, donations are welcome — BTC only:
 `bc1qexhamvrpclpr2skyyw3u8edm8kznnvt6zjudxu`
-(also reachable from inside the app via the sidebar → **Donate**)
 
 ![MinerWatch dashboard](docs/screenshots/dashboard.png)
 
