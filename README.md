@@ -4,12 +4,14 @@
 
 **A local-first dashboard for home Bitcoin miners.**
 
-Monitor and control Bitaxe, NerdQAxe, Canaan Avalon Nano 3s and Braiins BMM
-miners on your home network — all from your browser, no cloud, no telemetry.
+Monitor and control Bitaxe, NerdQAxe / NerdOCTAXE, Canaan Avalon Nano 3s
+and Braiins BMM miners — plus read-only monitoring of LuxOS Antminer /
+Whatsminer rigs — on your home network, all from your browser. No cloud,
+no telemetry.
 
 [![CI](https://github.com/imlenti/MinerWatch/actions/workflows/ci.yml/badge.svg)](https://github.com/imlenti/MinerWatch/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/status-alpha-orange.svg)](#)
 [![No Warranty](https://img.shields.io/badge/warranty-none-red.svg)](#disclaimer)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -113,6 +115,26 @@ comfortable opening a terminal but not necessarily developers.
   replicating the BitAxe firmware loop (Kp=5, Ki=0.1, Kd=2, EMA, target temp
   configurable per device). Useful on miners whose firmware lacks a sane
   curve, or to hold a target temperature across the fleet
+- **Guardian frequency governor** (`backend/guardian.py`, AxeOS / Nerd\*
+  only) — a slow outer-loop control that watches the *VR (voltage
+  regulator)* temperature and the rejected-share rate, and nudges the
+  ASIC frequency down when the VR runs hot or shares get unstable, then
+  recovers frequency as it cools. Complements the fan PID (which watches
+  the *chip*) and fills the gap the 75 °C overheat watchdog doesn't cover.
+  Opt-in per miner with editable floor / ceiling. Design notes:
+  [docs/guardian-design.md](docs/guardian-design.md)
+- **Donate hashrate** — temporarily lend any subset of your miners to the
+  project's solo.ckpool address for a few hours; MinerWatch snapshots each
+  miner's current pool, repoints it, and auto-reverts when the timer
+  expires (crash-safe across restarts). One-click from the *Donate*
+  sidebar entry. Design notes:
+  [docs/donate-hashrate-design.md](docs/donate-hashrate-design.md)
+- **Optional MQTT publisher** for Home Assistant — connects to a broker
+  you already run and pushes a retained state blob per miner, with HA
+  MQTT-discovery so each miner auto-appears as an HA device, plus optional
+  flat scalar topics for ESP32 / ESPHome panels. Self-disables if not
+  configured. Full guide:
+  [docs/home-assistant-integration.md](docs/home-assistant-integration.md)
 - **Multi-channel alerts**: Web Push (VAPID) for native OS notifications,
   *and* a Telegram bot that delivers to any phone or desktop without HTTPS
   — both channels are independent kill-switches in the UI
@@ -129,11 +151,11 @@ comfortable opening a terminal but not necessarily developers.
   responsive down to phone-size viewports
 - **One-click macOS launcher**, Docker setup for Linux / Raspberry Pi, and
   an Umbrel App Store package (`umbrel/`) for one-click install on umbrelOS
-- **In-app self-update** — sidebar entry checks GitHub Releases, downloads
-  and SHA-256-verifies the matching tarball, swaps files preserving your
-  data, and restarts the service. One click from the dashboard, no SSH
-  needed (bare-metal installs only — Docker users update by rebuilding
-  the image, see the [Updates](#updates) section)
+- **In-app self-update** (bare-metal installs) — sidebar entry checks
+  GitHub Releases, downloads and SHA-256-verifies the matching tarball,
+  swaps files preserving your data, and restarts the service, all from
+  the dashboard with no SSH. Docker and Umbrel update via their image
+  instead — see [Updates](#updates)
 - **Self-healing frontend bundle** — if `frontend-react/dist/` is missing
   or out of sync with the installed version (typical after a `git pull`
   or fresh clone), `start.sh` automatically fetches the prebuilt bundle
@@ -143,12 +165,25 @@ comfortable opening a terminal but not necessarily developers.
 
 ## Supported miners
 
-| Family          | Tested models                            | Protocol                |
-|-----------------|------------------------------------------|-------------------------|
-| Bitaxe          | Gamma 601 / 602, Supra, Ultra, Max       | HTTP REST :80           |
-| NerdQAxe        | NerdQAxe+, NerdQAxe++                    | HTTP REST :80 (Bitaxe-compatible) |
-| Canaan Avalon   | Nano 3s, Avalon Q                        | TCP cgminer-text :4028  |
-| Braiins         | BMM 101 (BOSminer firmware)              | TCP cgminer-JSON :4028  |
+| Family            | Tested models                              | Protocol                          | Controls   |
+|-------------------|--------------------------------------------|-----------------------------------|------------|
+| Bitaxe            | Gamma 601 / 602, Supra, Ultra, Max         | HTTP REST :80                     | Full       |
+| NerdQAxe / Octaxe | NerdQAxe+, NerdQAxe++, NerdOCTAXE-Plus/Gamma | HTTP REST :80 (Bitaxe-compatible) | Full       |
+| Canaan Avalon     | Nano 3s                                     | TCP cgminer-text :4028           | Full       |
+| Braiins           | BMM 101 (BOSminer firmware)                | TCP cgminer-JSON :4028           | Full       |
+| LuxOS (Luxor)     | Bitmain Antminer S19 / S21, MicroBT Whatsminer | TCP cgminer-JSON :4028        | Monitor only |
+
+The **NerdQAxe and NerdOCTAXE** lines are one driver family internally
+(`nerdoctaxe`): both are multi-chip AxeOS boards that share the Bitaxe
+REST surface, so MinerWatch auto-detects either as the same family and
+adds the dual-fan / dual-pool / PSU-current readouts on top.
+
+**LuxOS is monitoring-only for now.** MinerWatch reads hashrate, temps,
+fans, power and pools from LuxOS-flashed Antminer/Whatsminer rigs, but
+exposes no control buttons — LuxOS write commands need a stateful
+session that's intentionally left for a later release. Everything else
+(Bitaxe, Nerd*, Canaan, Braiins) supports fan / frequency / voltage /
+restart control.
 
 Adding a new model usually means a single new file in `backend/miners/`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the driver template.
@@ -326,10 +361,9 @@ What the stack does:
 - Adds a `HEALTHCHECK` on `/api/health` so `docker ps` reflects
   whether the API is actually serving.
 
-Update after a `git pull` (Docker mode does **not** support the in-app
-Update button — the container's `/app/` is reset from the immutable
-image on every restart, so any in-place file swap would be wiped out
-the next time Docker recreates the container):
+Update by rebuilding the image after a `git pull` (Docker doesn't support
+the in-app Update button — the image is immutable; full reasoning in
+[Updates](#updates)):
 
 ```bash
 git pull origin main
@@ -361,9 +395,19 @@ If you run an Umbrel home server, MinerWatch ships an App Store package
 under `umbrel/` (`umbrel-app.yml` + `docker-compose.yml` + README). The
 submission process is the standard `getumbrel/umbrel-apps` PR flow —
 the `umbrel/README.md` documents the build / pin / publish checklist.
-Once the listing is approved, installation is a single click from the
+There's also a ready-to-publish **Community App Store** under
+`community-app-store/`, which Umbrel users can add by URL without waiting
+for official-store review (*App Store → ⋯ → Community App Stores →* paste
+the repo URL). Either way, installation is a single click from the
 Umbrel dashboard, and persistent data lives in `${APP_DATA_DIR}/data`
 on the Umbrel box.
+
+**Updating on Umbrel**: the in-app *Update* button is disabled under
+Umbrel (the container image is immutable), but you don't need it — when
+a newer version is published, Umbrel shows an **Update** badge on the app
+in the App Store, and one click pulls the new image. Your
+`${APP_DATA_DIR}/data` (database, push keys, settings) is preserved
+across the update.
 
 #### Caveat: Docker Desktop on macOS / Windows
 
@@ -422,8 +466,6 @@ will not find any miner** because the container can't see your
                      └─────────────────┘
 ```
 
-More detail in [docs/architecture.md](docs/architecture.md).
-
 ## Configuration
 
 The shipped defaults work for most home setups. To customise, copy
@@ -448,8 +490,12 @@ Highlights:
   The legacy `storage.retention_days` is honoured as an alias for the
   1-minute tier so older configs keep working
 - `auth.enabled`, `auth.password` — turn on password protection
+- `mqtt.*` — optional Home Assistant / MQTT publisher (off by default;
+  see [docs/home-assistant-integration.md](docs/home-assistant-integration.md))
 
-Full reference: [docs/configuration.md](docs/configuration.md).
+Every key is documented inline in
+[config.example.yaml](config.example.yaml), and all of them are also
+editable from the in-app **Settings** page.
 
 ## Updates
 
@@ -478,13 +524,19 @@ disk for 6 hours (avoids hitting the anonymous GitHub rate limit of
 subscriptions, your `config.yaml`, and the Python virtualenv. The
 update only ever overwrites code files.
 
-**What's required**: a bare-metal install with a service manager that
-restarts the process on exit (launchd's `KeepAlive` / systemd's
-`Restart=on-failure`). Both `installer.command` and
-`scripts/install-service.sh` set this up correctly. The in-app
-*Install* button is **not supported under Docker** — see the
-[Docker section](#docker--raspberry-pi-alternative-to-startsh)
-for the manual `docker compose pull` / rebuild flow.
+**How updates work per install type:**
+
+- **Bare-metal** (macOS launchd / Linux systemd, via `installer.command`
+  or `scripts/install-service.sh`): the in-app *Install* button does the
+  full download → verify → swap → restart. This is the only mode where
+  the one-click button applies.
+- **Docker**: the in-app button is disabled (the image is immutable, so a
+  file swap would be discarded on the next container recreate). Update by
+  pulling the new image — see the
+  [Docker section](#docker--raspberry-pi-alternative-to-startsh).
+- **Umbrel**: also image-based, so the in-app button is disabled — but
+  Umbrel surfaces an **Update** badge on the app when a new version ships,
+  and one click from the App Store pulls it. No SSH or rebuild needed.
 
 **Cutting a release** (if you fork or maintain MinerWatch): bump
 `VERSION` and `frontend-react/package.json`, tag with `vX.Y.Z` and
@@ -521,7 +573,8 @@ native OS notifications.
 
 > **macOS note**: in addition to the per-site permission, you also need to
 > allow notifications at the system level under *System Settings →
-> Notifications → Google Chrome*. See [docs/faq.md](docs/faq.md).
+> Notifications → Google Chrome*. See the
+> [Troubleshooting](#troubleshooting) section below.
 
 > **HTTPS caveat**: browsers expose the Web Push API only on `https://`
 > or `http://localhost`. If you reach MinerWatch from another device on
@@ -557,6 +610,12 @@ Under the hood MinerWatch accepts either an `Authorization: Bearer
 automatically when you submit the login form at `/login`, so the
 dashboard "just works" in a browser; the bearer header is there for
 scripted access and curl.
+
+Failed logins are rate-limited per client IP: after a handful of wrong
+passwords that IP is locked out for 60 seconds, which slows brute-force
+attempts without inconveniencing a legitimate typo. If `auth.enabled` is
+true but no password is set, MinerWatch fails closed (refuses every
+protected request) rather than silently allowing access.
 
 ## Discovery
 
@@ -654,16 +713,13 @@ Power is read from the `MPO[N]` field (watts, direct). The legacy `PS[...]`
 fields use different units depending on firmware, so they're ignored.
 </details>
 
-More: [docs/faq.md](docs/faq.md).
-
 ## Adding a new miner driver
 
 In short: drop a new file in `backend/miners/`, subclass `MinerDriver`,
 implement `async def poll(self) -> MinerSample`, optionally override the
 write methods (`set_fan_speed`, `set_frequency`, `set_voltage`, `restart`)
 plus the capability flags, and register it in `backend/miners/__init__.py`.
-Full walkthrough with a copy-pasteable template:
-[docs/adding-a-miner.md](docs/adding-a-miner.md) and
+Full walkthrough with a copy-pasteable template in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
@@ -682,7 +738,11 @@ Done:
       SHA-256 verify → swap → restart, preserves user data)
 - [x] Self-healing frontend bundle (`start.sh` downloads the prebuilt
       `dist/` from the matching release when missing — no Node required)
-- [x] In-app Donate dialog (BTC address + client-side QR + copy)
+- [x] In-app Donate dialog (BTC address + client-side QR + copy) and
+      Donate-hashrate flow (temporary solo.ckpool repoint + auto-revert)
+- [x] Guardian VR-temperature frequency governor (AxeOS / Nerd\*)
+- [x] MQTT publisher + Home Assistant MQTT-discovery
+- [x] LuxOS driver (Antminer S19 / S21, Whatsminer) — read-only monitoring
 
 Next:
 
@@ -692,10 +752,9 @@ Next:
 - [ ] Anomaly detection (z-score on hashrate / temperature drift)
 - [ ] Pool failover (primary / secondary with auto-switch)
 - [ ] Webhook out (Discord / Slack / ntfy / Apprise / generic POST)
-- [ ] MQTT export + Home Assistant discovery
 - [ ] Remote access guidance (Tailscale, reverse tunnel)
-- [ ] Test suite (currently none — contributions welcome)
-- [ ] Extra drivers: full Antminer line via cgminer, Whatsminer
+- [ ] LuxOS write controls (fan / frequency / power-target / curtailment)
+- [ ] Extra drivers: full Antminer line via cgminer
 
 ## Contributing
 
