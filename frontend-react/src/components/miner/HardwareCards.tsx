@@ -19,6 +19,13 @@ export function HardwareCards({ data }: Props) {
   const { miner, last_metric: lm, live_sample: ls } = data;
   const raw = (ls?.raw ?? {}) as Record<string, unknown>;
 
+  // Live poller verdict first, DB last_status as fallback. When offline
+  // we drop the live readings (temps, fan, power, hashrate, shares…) and
+  // show nothing for them rather than echoing the stale last-seen values
+  // — identity fields (family, model, host, MAC) and user setpoints come
+  // from the miner record and stay visible.
+  const offline = ls ? ls.online === false : miner.last_status === 'offline';
+
   // Prefer the live sample (fresher, more fields) and fall back to the
   // latest DB row when the live one hasn't arrived yet. The helper
   // returns `unknown` and callers `as`-cast at the point of use — this
@@ -27,6 +34,7 @@ export function HardwareCards({ data }: Props) {
   const liveBag = (ls ?? {}) as unknown as Record<string, unknown>;
   const dbBag = (lm ?? {}) as unknown as Record<string, unknown>;
   const v = (key: string): unknown => {
+    if (offline) return null;
     const lv = liveBag[key];
     if (lv !== null && lv !== undefined) return lv;
     return dbBag[key];

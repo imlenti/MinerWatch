@@ -509,11 +509,12 @@ export interface AlertsResponse {
   alerts: AlertEntry[];
 }
 
+// Manual "Add miner" payload. Only the address is sent: the backend
+// connects to the miner and auto-detects family / port / MAC / model /
+// name with the same fingerprint auto-discovery uses. Notes are the one
+// optional, user-supplied field.
 export interface MinerCreatePayload {
-  family: MinerFamily;
   host: string;
-  port?: number | null;
-  name?: string | null;
   notes?: string | null;
 }
 

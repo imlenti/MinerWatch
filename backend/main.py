@@ -37,7 +37,7 @@ from .auth import (
 from .auto_control import auto_fan
 from .donations import donation_controller
 from .config import FRONTEND_DIR, db_path, get_config, reload_config
-from .discovery import discover_and_register, scan_network
+from .discovery import discover_and_register, identify_host, scan_network
 from .miners import DRIVERS, driver_for_record
 from .poller import poller
 from .guardian import guardian, GUARDIAN_FAMILIES
@@ -314,12 +314,18 @@ async def v2_redirect(path: str = "") -> Response:
 # ---------- API: miners ----------
 
 class MinerCreate(BaseModel):
-    family: str = Field(..., description="bitaxe | canaan | braiins")
+    """Manual "Add miner" payload.
+
+    Only the address is required: MinerWatch connects to the miner and
+    auto-detects everything else (family, port, MAC, model, name) with
+    the same fingerprint auto-discovery uses. This is why ``family`` /
+    ``port`` / ``name`` are no longer accepted from the client -- a
+    user-declared family is exactly what used to mis-save NerdOctaxe /
+    NerdQAxe boards as plain ``bitaxe``.
+    """
+
     host: str
-    port: Optional[int] = None
-    name: Optional[str] = None
     notes: Optional[str] = None
-    fan_threshold_c: Optional[float] = None
 
 
 @app.get("/api/health")
@@ -501,9 +507,36 @@ async def api_list_pools() -> dict:
 
 @app.post("/api/miners")
 async def api_create_miner(payload: MinerCreate) -> dict:
-    if payload.family not in DRIVERS:
-        raise HTTPException(400, f"invalid family (use: {', '.join(DRIVERS)})")
-    miner_id = await db.upsert_miner(payload.model_dump(exclude_none=True))
+    """Register a miner by address, auto-detecting the rest.
+
+    Connects to the given IP/hostname and fingerprints it (ports 80 /
+    4028) to derive family, port, MAC, model and a friendly name --
+    instead of trusting a user-declared family. Best-effort with a hard
+    stop: if the host doesn't answer on either port we return 400 so the
+    UI can tell the user the miner is unreachable, rather than silently
+    persisting a record we could never poll.
+
+    The detected MAC lets :func:`db.upsert_miner` dedupe against an
+    existing entry (including the same device on a new IP); user notes
+    are layered on top of the detected fields.
+    """
+    host = (payload.host or "").strip()
+    if not host:
+        raise HTTPException(400, "host (IP or hostname) is required")
+
+    info = await identify_host(host)
+    if info is None:
+        raise HTTPException(
+            400,
+            f"No miner answered at {host} on ports 80 or 4028. "
+            "Check the IP/hostname and make sure the device is powered on "
+            "and reachable from MinerWatch.",
+        )
+
+    if payload.notes is not None:
+        info["notes"] = payload.notes
+
+    miner_id = await db.upsert_miner(info)
     return {"id": miner_id}
 
 

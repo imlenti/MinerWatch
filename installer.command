@@ -18,6 +18,30 @@ set -euo pipefail
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="$HOME/Library/Application Support/MinerWatch"
 
+# MinerWatch's pinned dependencies (pydantic-core, cryptography) only publish
+# prebuilt wheels for CPython 3.10-3.13. On Python 3.14+ pip falls back to
+# compiling them from source, which needs a Rust toolchain and a newer pyo3
+# than those releases ship - and fails. So we pick the newest *supported*
+# interpreter we can find instead of trusting the bare `python3`.
+SUPPORTED_PY=(python3.13 python3.12 python3.11 python3.10)
+find_supported_python() {
+    local name dir
+    for name in "${SUPPORTED_PY[@]}"; do
+        if command -v "$name" >/dev/null 2>&1; then
+            command -v "$name"
+            return 0
+        fi
+    done
+    # Fallback: probe common install locations that may not be on PATH.
+    for name in "${SUPPORTED_PY[@]}"; do
+        for dir in /opt/homebrew/bin /usr/local/bin \
+                   /Library/Frameworks/Python.framework/Versions/*/bin; do
+            [[ -x "$dir/$name" ]] && { echo "$dir/$name"; return 0; }
+        done
+    done
+    return 1
+}
+
 if [[ -t 1 ]]; then
     BOLD=$(tput bold); GREEN=$(tput setaf 2); YELLOW=$(tput setaf 3); RESET=$(tput sgr0)
 else
@@ -46,8 +70,12 @@ Press Enter to continue, or Ctrl-C to cancel.
 EOF
 read -r _
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "${YELLOW}python3 not found. Install it from https://www.python.org/downloads/${RESET}"
+if ! PYTHON_BIN="$(find_supported_python)"; then
+    echo "${YELLOW}No supported Python found.${RESET}" >&2
+    echo "MinerWatch needs Python 3.10-3.13 (3.14+ isn't supported yet by its" >&2
+    echo "dependencies). Install one and re-run this installer:" >&2
+    echo "    brew install python@3.13" >&2
+    echo "    # or download 3.13 from https://www.python.org/downloads/" >&2
     exit 1
 fi
 
@@ -81,13 +109,20 @@ cd "$RUNTIME_DIR"
 
 echo
 echo "${BOLD}→ Setting up Python virtual environment...${RESET}"
+echo "  Using $("$PYTHON_BIN" --version 2>&1) ($PYTHON_BIN)"
+# Rebuild the venv if it's incomplete or was created with an unsupported
+# Python (e.g. an earlier run that picked up the system's 3.14).
+if [[ -d .venv ]] && ! .venv/bin/python -c 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,13) else 1)' >/dev/null 2>&1; then
+    echo "  Existing .venv uses an unsupported/incomplete Python — rebuilding it."
+    rm -rf .venv
+fi
 if [[ ! -d .venv ]]; then
-    python3 -m venv .venv
+    "$PYTHON_BIN" -m venv .venv
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install --quiet --upgrade pip
-pip install --quiet -r requirements.txt
+pip install --quiet --no-cache-dir --upgrade pip
+pip install --quiet --no-cache-dir -r requirements.txt
 echo "${GREEN}✓ Virtual environment ready${RESET}"
 
 # 4. install service from the runtime dir

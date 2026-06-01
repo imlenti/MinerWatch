@@ -13,7 +13,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAddMiner } from '@/api/hooks';
 import { ApiError } from '@/lib/api';
-import type { MinerFamily } from '@/lib/types';
 
 interface Props {
   open: boolean;
@@ -23,27 +22,26 @@ interface Props {
 /**
  * Manual "Add miner" form. Submits to POST /api/miners.
  *
- * Form quirks to preserve from the vanilla page:
- *   - port is optional; the driver defaults to 80 (Bitaxe) or 4028
- *     (cgminer-based) when left blank
- *   - name is optional; the backend autogenerates one from the family
- *     and host if absent
+ * Address-only by design: the user types an IP or hostname and the
+ * backend connects to the miner to auto-detect the family, port, MAC,
+ * model and a friendly name -- the same fingerprint auto-discovery runs.
+ * That removes the old family dropdown (whose `bitaxe` default mis-saved
+ * NerdOctaxe / NerdQAxe boards) and the manual port field (ports 80 /
+ * 4028 are probed automatically).
+ *
+ * The probe is best-effort with a hard stop: if the miner doesn't
+ * answer, the backend returns 400 and we surface its message instead of
+ * registering an unreachable device. Notes is the one optional field.
  */
 export function AddMinerDialog({ open, onOpenChange }: Props) {
-  const [family, setFamily] = useState<MinerFamily>('bitaxe');
   const [host, setHost] = useState('');
-  const [port, setPort] = useState('');
-  const [name, setName] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const addMiner = useAddMiner();
 
   function reset() {
-    setFamily('bitaxe');
     setHost('');
-    setPort('');
-    setName('');
     setNotes('');
     setError(null);
   }
@@ -57,10 +55,7 @@ export function AddMinerDialog({ open, onOpenChange }: Props) {
     }
     try {
       await addMiner.mutateAsync({
-        family,
         host: host.trim(),
-        port: port ? Number(port) : null,
-        name: name.trim() || null,
         notes: notes.trim() || null,
       });
       reset();
@@ -82,40 +77,12 @@ export function AddMinerDialog({ open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle>Add miner</DialogTitle>
           <DialogDescription>
-            Connects to a miner on your LAN by hostname or IP. Auto-discovery still works after
-            this — the new entry just gets registered immediately.
+            Enter the miner&apos;s IP or hostname. MinerWatch connects to it and detects the
+            model, type and port automatically. The device must be powered on and reachable.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={submit} className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="family">Family</Label>
-              <select
-                id="family"
-                value={family}
-                onChange={(e) => setFamily(e.target.value as MinerFamily)}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="bitaxe">Bitaxe / NerdQAxe</option>
-                <option value="nerdoctaxe">NerdOctaxe (8-ASIC)</option>
-                <option value="canaan">Canaan / Avalon</option>
-                <option value="braiins">Braiins / BMM</option>
-                <option value="luxos">LuxOS (Antminer)</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="port">Port</Label>
-              <Input
-                id="port"
-                type="number"
-                placeholder={family === 'bitaxe' || family === 'nerdoctaxe' ? '80' : '4028'}
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-              />
-            </div>
-          </div>
-
           <div className="space-y-2">
             <Label htmlFor="host">Host or IP *</Label>
             <Input
@@ -130,22 +97,11 @@ export function AddMinerDialog({ open, onOpenChange }: Props) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="name">Name (optional)</Label>
-            <Input
-              id="name"
-              type="text"
-              placeholder="Bitaxe Supra · garage"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
             <Label htmlFor="notes">Notes (optional)</Label>
             <Input
               id="notes"
               type="text"
-              placeholder="Free text — visible on the miner detail page"
+              placeholder="Free text -- visible on the miner detail page"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
@@ -170,7 +126,7 @@ export function AddMinerDialog({ open, onOpenChange }: Props) {
               Cancel
             </Button>
             <Button type="submit" disabled={addMiner.isPending || !host.trim()}>
-              {addMiner.isPending ? 'Adding…' : 'Add miner'}
+              {addMiner.isPending ? 'Connecting...' : 'Add miner'}
             </Button>
           </DialogFooter>
         </form>

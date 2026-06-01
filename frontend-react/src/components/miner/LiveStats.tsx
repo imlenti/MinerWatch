@@ -16,10 +16,22 @@ interface Props {
 export function LiveStats({ data }: Props) {
   const lm = data.last_metric;
   const ls = data.live_sample;
-  const status = data.miner.last_status ?? (data.live_sample?.online ? 'online' : 'unknown');
+  // Prefer the live poller verdict: if the most recent poll says the
+  // miner is offline, treat it as offline even when the persisted
+  // last_status is momentarily stale.
+  const status = ls?.online === false
+    ? 'offline'
+    : data.miner.last_status ?? (data.live_sample?.online ? 'online' : 'unknown');
   const error = ls?.error ?? null;
 
+  // When offline we have no fresh readings, so blank every live metric
+  // with a "—" instead of echoing the last values seen before the miner
+  // went down (those are stale and read as if it were still running).
+  // The Status row still reports "offline".
+  const offline = status === 'offline';
+
   const v = <K extends keyof MetricSample & keyof LiveSample>(key: K): number | string | null | undefined => {
+    if (offline) return null;
     if (ls && (ls as Record<K, unknown>)[key] !== null && (ls as Record<K, unknown>)[key] !== undefined) {
       return (ls as Record<K, unknown>)[key] as number | string | null | undefined;
     }

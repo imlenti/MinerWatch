@@ -6,14 +6,44 @@ set -e
 cd "$(dirname "$0")"
 
 VENV_DIR=".venv"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+
+# Pick a supported interpreter (3.10-3.13). MinerWatch's pinned deps
+# (pydantic-core, cryptography) have no wheels for 3.14+, so creating the
+# venv with the bare system `python3` can land on an unsupported version and
+# break `pip install`. An explicit PYTHON_BIN env var still takes precedence.
+find_supported_python() {
+    local name dir
+    for name in python3.13 python3.12 python3.11 python3.10; do
+        if command -v "$name" >/dev/null 2>&1; then command -v "$name"; return 0; fi
+    done
+    for name in python3.13 python3.12 python3.11 python3.10; do
+        for dir in /opt/homebrew/bin /usr/local/bin \
+                   /Library/Frameworks/Python.framework/Versions/*/bin; do
+            [ -x "$dir/$name" ] && { echo "$dir/$name"; return 0; }
+        done
+    done
+    return 1
+}
+PYTHON_BIN="${PYTHON_BIN:-$(find_supported_python || true)}"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "ERROR: no supported Python (3.10-3.13) found."
+    echo "Install one, e.g.:  brew install python@3.13"
+    echo "or download 3.13 from https://www.python.org/downloads/"
+    exit 1
+fi
 
 echo "[MinerWatch] Using Python: $($PYTHON_BIN --version 2>&1) ($(command -v $PYTHON_BIN))"
 
-# If the venv exists but is broken (missing activate), recreate it from scratch.
-if [ -d "$VENV_DIR" ] && [ ! -f "$VENV_DIR/bin/activate" ]; then
-    echo "[MinerWatch] Existing venv is incomplete, recreating it."
-    rm -rf "$VENV_DIR"
+# Recreate the venv if it's incomplete (missing activate) OR was built with an
+# unsupported Python version (e.g. a previous run that used 3.14).
+if [ -d "$VENV_DIR" ]; then
+    if [ ! -f "$VENV_DIR/bin/activate" ]; then
+        echo "[MinerWatch] Existing venv is incomplete, recreating it."
+        rm -rf "$VENV_DIR"
+    elif ! "$VENV_DIR/bin/python" -c 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,13) else 1)' >/dev/null 2>&1; then
+        echo "[MinerWatch] Existing venv uses an unsupported Python, recreating it."
+        rm -rf "$VENV_DIR"
+    fi
 fi
 
 if [ ! -d "$VENV_DIR" ]; then
@@ -24,8 +54,8 @@ if [ ! -d "$VENV_DIR" ]; then
         echo
         echo "On macOS, Apple's bundled Python sometimes has issues with the venv module."
         echo "Workarounds:"
-        echo "  1. Install Python via Homebrew:    brew install python"
-        echo "     then re-run with:                PYTHON_BIN=python3 ./start.sh"
+        echo "  1. Install a supported Python (3.10-3.13):  brew install python@3.13"
+        echo "     then re-run:  ./start.sh   (it auto-detects 3.13)"
         echo "  2. Or use pip --user directly:"
         echo "     pip3 install --user --break-system-packages -r requirements.txt"
         echo "     python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000"
@@ -42,8 +72,8 @@ fi
 source "$VENV_DIR/bin/activate"
 
 echo "[MinerWatch] Upgrading pip and installing dependencies ..."
-python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -r requirements.txt
+python -m pip install --quiet --no-cache-dir --upgrade pip
+python -m pip install --quiet --no-cache-dir -r requirements.txt
 
 # ---------------------------------------------------------------------------
 # Frontend bundle auto-heal

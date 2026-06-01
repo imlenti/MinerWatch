@@ -261,6 +261,57 @@ def _default_name(family: str, host: str) -> str:
     return f"{_default_model(family)} {host}"
 
 
+async def _identify_from_ports(host: str, ports: list[int]) -> dict | None:
+    """Run the matching driver fingerprint for a host with known open ports.
+
+    Tries the AxeOS REST identity first (port 80), then the cgminer
+    family (port 4028). Returns the discovery dict
+    (``{family, host, port, mac, model, name}``) or ``None`` when no
+    driver could identify the host. Shared by both the subnet
+    :func:`scan_network` and the single-host :func:`identify_host`.
+    """
+    info = None
+    if PORT_BITAXE in ports:
+        info = await _identify_bitaxe(host)
+    if not info and PORT_CGMINER in ports:
+        info = await _identify_cgminer(host)
+    return info
+
+
+async def _open_ports(host: str, timeout: float) -> list[int]:
+    """Probe ports 80 and 4028 in parallel; return the ones that answer."""
+    results = await asyncio.gather(
+        _port_open(host, PORT_BITAXE, timeout),
+        _port_open(host, PORT_CGMINER, timeout),
+    )
+    return [p for p, is_open in zip([PORT_BITAXE, PORT_CGMINER], results) if is_open]
+
+
+async def identify_host(host: str, timeout: float | None = None) -> dict | None:
+    """Fingerprint a single host the same way auto-discovery does.
+
+    This is the single-host counterpart of :func:`scan_network`: it
+    probes the two well-known miner ports (80 for AxeOS, 4028 for the
+    cgminer family) and, on a reply, runs the matching driver to derive
+    the family, model, MAC and a friendly name -- exactly the metadata
+    the subnet scan collects. Used by the manual "Add miner" flow so a
+    hand-entered IP/hostname gets the *detected* family instead of a
+    user-declared one (which is how NerdOctaxe / NerdQAxe boards used to
+    get mis-saved as plain ``bitaxe``).
+
+    ``host`` may be an IP or a hostname. ``timeout`` defaults to the
+    configured ``network.scan_timeout``. Returns the discovery dict
+    (``{family, host, port, mac, model, name}``) or ``None`` when the
+    host doesn't answer on either port / can't be identified.
+    """
+    if timeout is None:
+        timeout = get_config().network.scan_timeout
+    ports = await _open_ports(host, timeout)
+    if not ports:
+        return None
+    return await _identify_from_ports(host, ports)
+
+
 async def scan_network(cidr: str | None = None) -> list[dict]:
     cfg = get_config()
     if not cidr:
@@ -285,13 +336,7 @@ async def scan_network(cidr: str | None = None) -> list[dict]:
 
     async def probe(host: str) -> tuple[str, list[int]]:
         async with sem:
-            results = await asyncio.gather(
-                _port_open(host, PORT_BITAXE, timeout),
-                _port_open(host, PORT_CGMINER, timeout),
-            )
-        open_ports = [
-            p for p, is_open in zip([PORT_BITAXE, PORT_CGMINER], results) if is_open
-        ]
+            open_ports = await _open_ports(host, timeout)
         return host, open_ports
 
     probes = await asyncio.gather(*(probe(h) for h in hosts))
@@ -301,11 +346,7 @@ async def scan_network(cidr: str | None = None) -> list[dict]:
     # Step 2: identify the family with the matching driver
     found: list[dict] = []
     for host, ports in candidates:
-        info = None
-        if PORT_BITAXE in ports:
-            info = await _identify_bitaxe(host)
-        if not info and PORT_CGMINER in ports:
-            info = await _identify_cgminer(host)
+        info = await _identify_from_ports(host, ports)
         if info:
             found.append(info)
 

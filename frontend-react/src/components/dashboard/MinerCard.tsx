@@ -24,6 +24,13 @@ export function MinerCard({ miner }: Props) {
       ? 'online'
       : (miner.last_status as 'pending' | undefined) ?? 'pending';
 
+  // When the miner is offline we no longer have live readings, so show a
+  // "—" placeholder instead of the last values we saw while it was up
+  // (those are stale and read as if the device were still running). We
+  // gate specifically on "offline" — not "pending" — so a freshly loaded
+  // page before the first poll still shows the last known metrics.
+  const offline = status === 'offline';
+
   const familyLabel = FAMILY_LABEL[miner.family] ?? miner.family;
 
   return (
@@ -47,22 +54,22 @@ export function MinerCard({ miner }: Props) {
         </header>
 
         <div className="mt-4 grid grid-cols-3 gap-3">
-          <Metric label="Hashrate" value={fmtNum(lm?.hashrate_ths, 2)} unit="TH/s" />
-          <Metric label="Power" value={fmtNum(lm?.power_w, 0)} unit="W" />
+          <Metric label="Hashrate" value={offline ? '—' : fmtNum(lm?.hashrate_ths, 2)} unit="TH/s" />
+          <Metric label="Power" value={offline ? '—' : fmtNum(lm?.power_w, 0)} unit="W" />
           <Metric
             label="Chip"
-            value={fmtNum(lm?.temp_chip_c, 1)}
+            value={offline ? '—' : fmtNum(lm?.temp_chip_c, 1)}
             unit="°C"
-            tone={tempTone(lm?.temp_chip_c)}
+            tone={offline ? undefined : tempTone(lm?.temp_chip_c)}
           />
           <Metric
             label="VR"
-            value={fmtNum(lm?.temp_vr_c, 1)}
+            value={offline ? '—' : fmtNum(lm?.temp_vr_c, 1)}
             unit="°C"
-            tone={tempTone(lm?.temp_vr_c)}
+            tone={offline ? undefined : tempTone(lm?.temp_vr_c)}
           />
-          <Metric label="Fan" value={lm?.fan_rpm ? String(lm.fan_rpm) : '—'} unit="rpm" />
-          <Metric label="Uptime" value={fmtUptime(lm?.uptime_s)} unit="" />
+          <Metric label="Fan" value={offline ? '—' : lm?.fan_rpm ? String(lm.fan_rpm) : '—'} unit="rpm" />
+          <Metric label="Uptime" value={offline ? '—' : fmtUptime(lm?.uptime_s)} unit="" />
         </div>
 
         <footer className="mt-4 flex items-center justify-between border-t border-border pt-3 text-[11px] text-muted-foreground">
