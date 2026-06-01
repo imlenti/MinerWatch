@@ -181,6 +181,7 @@ comfortable opening a terminal but not necessarily developers.
 | Bitaxe            | Gamma 601 / 602, Supra, Ultra, Max         | HTTP REST :80                     | Full       |
 | NerdQAxe / Octaxe | NerdQAxe+, NerdQAxe++, NerdOCTAXE-Plus/Gamma | HTTP REST :80 (Bitaxe-compatible) | Full       |
 | BitForge          | BitForge Nano (forge-os firmware)          | HTTP REST :80 (Bitaxe-compatible) | Full       |
+| NMAxe             | NMAxe, NMAxeGamma, NMQAxe++                | HTTP REST :80                     | Full       |
 | Canaan Avalon     | Nano 3s                                     | TCP cgminer-text :4028           | Full       |
 | Braiins           | BMM 101 (BOSminer firmware)                | TCP cgminer-JSON :4028           | Full       |
 | LuxOS (Luxor)     | Bitmain Antminer S19 / S21, MicroBT Whatsminer | TCP cgminer-JSON :4028        | Monitor only |
@@ -196,11 +197,13 @@ firmware) is also AxeOS-derived and is auto-detected via its
 per-ASIC `chiptemp1`/`chiptemp2`, INA260 board current) onto the
 standard readouts and uses the forge-os spelling for fan control.
 
+The **NMAxe** family (NMminer1024's ESP-Miner-NMAxe firmware) represents home miners with single/multiple ASIC chips and single/dual fans. MinerWatch detects these devices via nested telemetry blocks and exposes fan, frequency, voltage, pool, restart, and pause/resume control.
+
 **LuxOS is monitoring-only for now.** MinerWatch reads hashrate, temps,
 fans, power and pools from LuxOS-flashed Antminer/Whatsminer rigs, but
 exposes no control buttons — LuxOS write commands need a stateful
 session that's intentionally left for a later release. Everything else
-(Bitaxe, Nerd*, Canaan, Braiins) supports fan / frequency / voltage /
+(Bitaxe, Nerd*, NMAxe, Canaan, Braiins) supports fan / frequency / voltage /
 restart control.
 
 Adding a new model usually means a single new file in `backend/miners/`.

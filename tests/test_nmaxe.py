@@ -1,42 +1,35 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Tests for the NMAxe driver, discovery and live-share parsing.
-
-NMAxe is an AxeOS fork with a fully *nested* /api/system/info, controls
-under /api/setting/*, no MAC and no /api/system/asic. These tests pin:
-
-  * the nested field mapping in NmaxeDriver._parse(),
-  * the fan-only control surface (PATCH /api/setting/preference) and the
-    deliberately narrow capability flags,
-  * discovery via GET /probe (model "NM…"), incl. the regression that an
-    "NMQAxe++" must NOT be mis-claimed as nerdoctaxe by the "qaxe" heuristic,
-  * the NMAxe live-share WS dialect (ws://<ip>/ws, "₿ |x|share|pool|net|").
-
-Fixtures are the real payloads captured from an NMAxe BM1366 fw v3.0.21
-(see NOTES.md). Runs under pytest, or standalone:
-``python tests/test_nmaxe.py``.
-"""
+"""Tests for the NMAxe miner family driver (telemetry, fan control, discovery, WS)."""
 from __future__ import annotations
 
 import asyncio
 import pathlib
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+import pytest
 
 # Make the repo root importable whether invoked via pytest or directly.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from backend import discovery  # noqa: E402
-from backend.log_streamer import LogStreamer, MinerStream  # noqa: E402
-from backend.miners import DRIVERS, get_driver  # noqa: E402
-from backend.miners.base import MinerSample  # noqa: E402
-from backend.miners.nmaxe import NmaxeDriver  # noqa: E402
+from backend import discovery
+from backend.log_streamer import LogStreamer, MinerStream
+from backend.miners import DRIVERS, get_driver
+from backend.miners.base import MinerSample, PoolSnapshot, PoolConfig
+from backend.miners.nmaxe import NmaxeDriver
 
 
 def _nmaxe_info(**overrides):
-    """Real NMAxe (BM1366, fw v3.0.21) /api/system/info — nested schema."""
+    """A realistic NMAxe v3.0.21 /api/system/info response payload."""
     data = {
-        "power": {"power": 23.51316071, "vbus": 11370, "ibus": 2068},
-        "temps": {"vcore": 66.59999847, "asic": 56.88000107},
+        "power": {
+            "power": 23.51316071,
+            "vbus": 11370,
+            "ibus": 2068,
+        },
+        "temps": {
+            "vcore": 66.6015625,
+            "asic": 56.8828125,
+        },
         "asic": {
             "count": 1,
             "model": "BM1366",
@@ -49,16 +42,19 @@ def _nmaxe_info(**overrides):
             "state": "running",
             "paused": False,
             "pauseReason": "",
-            "hashRate": 629.164987,
+            "hashRate": 629.2,
             "bestDiffEver": "474.7M",
             "bestDiffSession": "2.874M",
             "networkDiff": "234.5M",
-            "poolDiff": "2.049K",
+            "poolDiff": "65.5K",
             "lastDiff": "5.789K",
             "blkhits": 0,
+            "freeHeap": 178000,
+            "minFreeHeap": 162000,
             "sAccepted": 1464,
             "sRejected": 36,
             "uptimeSeconds": 17604,
+            "uptimeEver": 348293,
         },
         "identity": {
             "fwVersion": "v3.0.21",
@@ -180,15 +176,15 @@ def test_parse_paused_unknown_when_absent():
 # ---- capabilities --------------------------------------------------
 
 
-def test_capabilities_fan_and_restart_only():
+def test_capabilities_supported():
     assert NmaxeDriver.can_set_fan is True
     assert NmaxeDriver.can_restart is True
-    assert NmaxeDriver.can_set_frequency is False
-    assert NmaxeDriver.can_set_voltage is False
+    assert NmaxeDriver.can_set_frequency is True
+    assert NmaxeDriver.can_set_voltage is True
     assert NmaxeDriver.can_set_workmode is False
-    assert NmaxeDriver.can_pause is False
+    assert NmaxeDriver.can_pause is True
     assert NmaxeDriver.can_shutdown is False
-    assert NmaxeDriver.can_set_pool is False
+    assert NmaxeDriver.can_set_pool is True
 
 
 # ---- fan control: PATCH /api/setting/preference --------------------
@@ -290,6 +286,120 @@ def test_nmaxe_non_share_line_ignored():
     stream = MinerStream(miner_id=1, host="10.0.0.9", port=80, family="nmaxe")
     asyncio.run(ls._handle_nmaxe_line(stream, "\x1b[0mI (123) wifi: connected\x1b[0m"))
     assert len(stream.buffer) == 0
+
+
+# ---- Our Control Tests ---------------------------------------------
+
+
+def test_nmaxe_control_pause_resume():
+    drv = NmaxeDriver("10.0.0.9")
+
+    async def run():
+        with patch("httpx.AsyncClient.patch") as mock_patch:
+            mock_patch.return_value = Mock(status_code=200)
+
+            res = await drv.pause()
+            assert res is True
+            mock_patch.assert_called_once_with(
+                "http://10.0.0.9:80/api/mining/state",
+                json={"paused": True}
+            )
+
+            mock_patch.reset_mock()
+            res = await drv.resume()
+            assert res is True
+            mock_patch.assert_called_once_with(
+                "http://10.0.0.9:80/api/mining/state",
+                json={"paused": False}
+            )
+
+    asyncio.run(run())
+
+
+def test_nmaxe_control_freq_volt_restart():
+    drv = NmaxeDriver("10.0.0.9")
+
+    async def run():
+        with patch("httpx.AsyncClient.patch") as mock_patch, \
+             patch("httpx.AsyncClient.post") as mock_post:
+            mock_patch.return_value = Mock(status_code=200)
+            mock_post.return_value = Mock(status_code=200)
+
+            assert await drv.set_frequency(500) is True
+            mock_patch.assert_called_once_with(
+                "http://10.0.0.9:80/api/setting/mining",
+                json={"asicFreqReq": 500}
+            )
+
+            mock_patch.reset_mock()
+            assert await drv.set_voltage(1100) is True
+            mock_patch.assert_called_once_with(
+                "http://10.0.0.9:80/api/setting/mining",
+                json={"asicVcoreReq": 1100}
+            )
+
+            assert await drv.restart() is True
+            mock_post.assert_called_once_with("http://10.0.0.9:80/api/system/restart")
+
+    asyncio.run(run())
+
+
+def test_nmaxe_pool_config():
+    drv = NmaxeDriver("10.0.0.9")
+
+    mining_settings = {
+        "stratum": {
+            "primary": {"url": "stratum+tcp://solo.ckpool.org:3333", "user": "user1", "pwd": "p1"},
+            "fallback": {"url": "stratum+tcp://pool.example.com:4444", "user": "user2", "pwd": "p2"}
+        }
+    }
+
+    async def run():
+        with patch("httpx.AsyncClient.get") as mock_get, \
+             patch("httpx.AsyncClient.patch") as mock_patch, \
+             patch("httpx.AsyncClient.post") as mock_post:
+
+            mock_get.return_value = Mock(status_code=200, json=lambda: mining_settings)
+            mock_patch.return_value = Mock(status_code=200)
+            mock_post.return_value = Mock(status_code=200)
+
+            # 1. Read config
+            cfg = await drv.read_pool_config()
+            assert cfg.url == "solo.ckpool.org"
+            assert cfg.port == 3333
+            assert cfg.user == "user1"
+            assert cfg.password == "p1"
+            assert cfg.fb_url == "pool.example.com"
+            assert cfg.fb_port == 4444
+            assert cfg.fb_user == "user2"
+            assert cfg.fb_password == "p2"
+
+            # 2. Set config
+            new_cfg = PoolConfig(
+                url="new.pool.com",
+                port=5555,
+                user="newuser",
+                password="newpassword",
+                fb_url="newfb.com",
+                fb_port=6666,
+                fb_user="newfbuser",
+                fb_password="newfbpassword"
+            )
+            assert await drv.set_pool(new_cfg) is True
+
+            mock_patch.assert_called_once_with(
+                "http://10.0.0.9:80/api/setting/mining",
+                json={
+                    "stratum": {
+                        "primary": {"url": "stratum+tcp://new.pool.com:5555", "user": "newuser", "pwd": "newpassword"},
+                        "fallback": {"url": "stratum+tcp://newfb.com:6666", "user": "newfbuser", "pwd": "newfbpassword"}
+                    }
+                }
+            )
+            # Should restart automatically after set_pool
+            mock_post.assert_called_once_with("http://10.0.0.9:80/api/system/restart")
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

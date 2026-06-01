@@ -132,6 +132,12 @@ class BitaxeDriver(MinerDriver):
         fan_rpm = _opt_int(data.get("fanrpm"))
         fan_pct = _opt_float(data.get("fanspeed"))
 
+        # Secondary fan (supported natively in some multi-fan ESP-Miner builds as fan2rpm / fanspeed2)
+        fan_rpm_2 = _opt_int(data.get("fan2rpm") or data.get("fanrpm2"))
+        fan_pct_2 = _opt_float(data.get("fanspeed2") or data.get("fan2speed"))
+        fan_count = _opt_int(data.get("fanCount"))
+        has_second_fan = (fan_count is not None and fan_count > 1) or (fan_rpm_2 is not None and fan_rpm_2 > 0)
+
         # ASIC count. Modern AxeOS reports it directly as ``asicCount`` in
         # /api/system/info, and that stays the authoritative source. But
         # some firmware/board combinations omit it from the live-info
@@ -252,6 +258,8 @@ class BitaxeDriver(MinerDriver):
             temp_vr_c=temp_vr,
             fan_rpm=fan_rpm,
             fan_pct=fan_pct,
+            fan_rpm_2=fan_rpm_2 if has_second_fan else None,
+            fan_pct_2=fan_pct_2 if has_second_fan else None,
             frequency_mhz=freq_mhz,
             voltage_mv=voltage_mv,
             voltage_set_mv=voltage_set_mv,
@@ -521,20 +529,22 @@ def _split_host_port(url: str, port: int | None) -> tuple[str, int | None]:
 
     AxeOS stores host and port in separate fields. ``read_pool_config``
     already keeps them apart, but be defensive: if a caller passes a
-    combined ``host:port`` string and no explicit port, split it. Strips
-    any ``stratum+tcp://`` scheme prefix that some configs carry.
+    combined ``host:port`` string, split it. Strips any ``stratum+tcp://``
+    scheme prefix that some configs carry.
     """
     if url is None:
         return url, port
     host = url
     if "://" in host:
         host = host.split("://", 1)[1]
-    if port is None and host.count(":") == 1:
+    if ":" in host:
         h, _, p = host.partition(":")
-        try:
-            return h, int(p)
-        except ValueError:
-            return h, None
+        host = h
+        if port is None:
+            try:
+                port = int(p)
+            except ValueError:
+                pass
     return host, port
 
 
