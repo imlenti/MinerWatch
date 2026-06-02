@@ -2,7 +2,7 @@ manifestVersion: 1
 id: imlenti-minerwatch
 category: bitcoin
 name: MinerWatch
-version: "1.9.56"
+version: "1.9.6"
 tagline: Real-time monitor for home Bitcoin miners
 icon: https://raw.githubusercontent.com/imlenti/minerwatch-app-store/main/imlenti-minerwatch/icon.png
 description: >-
