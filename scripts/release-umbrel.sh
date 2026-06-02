@@ -16,8 +16,8 @@
 #   3. Bumps the Umbrel manifests (umbrel/ and community-app-store/), commits,
 #      pushes. These are not in the tag and do not need to be.
 #   4. Waits for you to confirm the GHCR image is published.
-#   5. Mirrors the canonical app folder into minerwatch-app-store/, normalizes
-#      the gallery to .png, commits, pushes. Umbrel users now get X.Y.Z.
+#   5. Mirrors the canonical app folder into minerwatch-app-store/, commits,
+#      pushes. Umbrel users now get X.Y.Z.
 #
 # The app store repo is assumed to be a sibling of this repo. Override with:
 #   APP_STORE_DIR=/path/to/minerwatch-app-store ./scripts/release-umbrel.sh X.Y.Z
@@ -88,7 +88,6 @@ read -r _
 cd "$APP_STORE_DIR"
 cp "$MINERWATCH_DIR/community-app-store/imlenti-minerwatch/umbrel-app.yml" imlenti-minerwatch/umbrel-app.yml
 cp "$MINERWATCH_DIR/community-app-store/imlenti-minerwatch/docker-compose.yml" imlenti-minerwatch/docker-compose.yml
-sed_inplace 's#^(  - [0-9]+)\.jpg#\1.png#' imlenti-minerwatch/umbrel-app.yml
 
 git add imlenti-minerwatch/umbrel-app.yml imlenti-minerwatch/docker-compose.yml
 git commit -m "Update MinerWatch app to $V"

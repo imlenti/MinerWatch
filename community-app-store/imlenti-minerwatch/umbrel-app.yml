@@ -4,6 +4,7 @@ category: bitcoin
 name: MinerWatch
 version: "1.9.56"
 tagline: Real-time monitor for home Bitcoin miners
+icon: https://raw.githubusercontent.com/imlenti/minerwatch-app-store/main/imlenti-minerwatch/icon.png
 description: >-
   MinerWatch is a self-hosted, local-first dashboard for small Bitcoin
   mining setups (1–10 miners). It watches BitAxe and NerdQAxe (Gamma /
@@ -49,9 +50,9 @@ repo: https://github.com/imlenti/MinerWatch
 support: https://github.com/imlenti/MinerWatch/issues
 port: 8000
 gallery:
-  - 1.jpg
-  - 2.jpg
-  - 3.jpg
+  - https://raw.githubusercontent.com/imlenti/minerwatch-app-store/main/imlenti-minerwatch/1.png
+  - https://raw.githubusercontent.com/imlenti/minerwatch-app-store/main/imlenti-minerwatch/2.png
+  - https://raw.githubusercontent.com/imlenti/minerwatch-app-store/main/imlenti-minerwatch/3.png
 path: ""
 defaultUsername: ""
 defaultPassword: ""
