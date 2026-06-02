@@ -181,6 +181,39 @@ export function MqttTab({ form, setForm }: Props) {
           </div>
         </div>
 
+        {/* Ambient temperature relay (optional) */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="mqtt.ambient_temp_topic">Ambient temperature topic</Label>
+            <Input
+              id="mqtt.ambient_temp_topic"
+              type="text"
+              placeholder="(optional) e.g. home/temperature"
+              autoComplete="off"
+              value={form.mqttAmbientTempTopic}
+              onChange={(e) => setForm({ ...form, mqttAmbientTempTopic: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Plain-text Celsius value from another device on this broker. MinerWatch relays it to
+              the ESP32 panel (60s average + session min/max). Empty = disabled.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="mqtt.ambient_temp_status_topic">Ambient status topic</Label>
+            <Input
+              id="mqtt.ambient_temp_status_topic"
+              type="text"
+              placeholder="(optional) online/offline"
+              autoComplete="off"
+              value={form.mqttAmbientStatusTopic}
+              onChange={(e) => setForm({ ...form, mqttAmbientStatusTopic: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">
+              Optional online/offline topic, used only to mark the reading available.
+            </p>
+          </div>
+        </div>
+
         <ToggleRow
           title="Home Assistant discovery"
           desc="Publish discovery configs so miners auto-appear as HA devices and entities."

@@ -222,6 +222,14 @@ class MqttCfg:
     # 0 = publish on every poll; >0 = throttle to at most once per N seconds.
     publish_interval_s: int = 0
     tls: bool = False            # use TLS (port is usually 8883 then)
+    # Optional: relay an ambient temperature from another device on the same
+    # broker into the ESP32 panel feed. Subscribe to a plain-text Celsius topic
+    # (e.g. a sensor publishing "23.5"); MinerWatch computes a 60s moving
+    # average + session min/max and ships them in the panel blob, so the panel
+    # needs no extra wiring. Empty = feature disabled. The status topic
+    # (online/offline) is optional and only used for availability.
+    ambient_temp_topic: str = ""
+    ambient_temp_status_topic: str = ""
 
 
 @dataclass

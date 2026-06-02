@@ -743,18 +743,6 @@ Done:
 - [x] MQTT publisher + Home Assistant MQTT-discovery
 - [x] LuxOS driver (Antminer S19 / S21, Whatsminer) — read-only monitoring
 
-Next:
-
-- [ ] €/kWh cost calculator + ROI dashboard (Analytics page with Energy
-      and Costs sub-tabs)
-- [ ] Scheduling work mode based on electricity prices / solar production
-- [ ] Anomaly detection (z-score on hashrate / temperature drift)
-- [ ] Pool failover (primary / secondary with auto-switch)
-- [ ] Webhook out (Discord / Slack / ntfy / Apprise / generic POST)
-- [ ] Remote access guidance (Tailscale, reverse tunnel)
-- [ ] LuxOS write controls (fan / frequency / power-target / curtailment)
-- [ ] Extra drivers: full Antminer line via cgminer
-
 ## Contributing
 
 Bug reports, pull requests, and new miner drivers are very welcome — see

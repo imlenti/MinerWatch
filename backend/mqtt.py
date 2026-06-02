@@ -25,6 +25,7 @@ import time
 from typing import Any
 
 from . import btc_price
+from .ambient_temp import AmbientTemp
 from .config import get_config
 from .miners import driver_for_record, get_driver
 from .miners.base import MinerSample
@@ -178,6 +179,10 @@ def panel_feed(
     btc_usd: float | None = None,
     btc_at: str | None = None,
     btc_chg: float | None = None,
+    temp_c: float | None = None,
+    temp_min_c: float | None = None,
+    temp_max_c: float | None = None,
+    temp_active: bool = False,
 ) -> dict[str, Any]:
     """Consolidated single-topic blob for a constrained display (ESPHome panel).
 
@@ -193,6 +198,11 @@ def panel_feed(
     time, 24h). Each is omitted when unavailable, so the panel just shows "--"
     until it arrives. Formatting the stamp here keeps the firmware free of any
     clock/timezone setup.
+
+    When an ambient temperature relay is active (``temp_active``), it also adds
+    ``temp_c`` (current, may be null when stale), ``temp_min_c`` and
+    ``temp_max_c`` (session extremes). The whole block is omitted when the relay
+    is off / has no data, so the panel shows no temperature row.
     """
     out: list[dict[str, Any]] = []
     for rec in miners:
@@ -223,6 +233,10 @@ def panel_feed(
             blob["btc_chg"] = round(float(btc_chg), 2)
         if btc_at:
             blob["btc_at"] = btc_at
+    if temp_active:
+        blob["temp_c"] = round(float(temp_c), 1) if temp_c is not None else None
+        blob["temp_min_c"] = round(float(temp_min_c), 1) if temp_min_c is not None else None
+        blob["temp_max_c"] = round(float(temp_max_c), 1) if temp_max_c is not None else None
     return blob
 
 
@@ -364,6 +378,8 @@ class MqttPublisher:
         # mac_id -> miner record (for command dispatch)
         self._miners_by_mac: dict[str, dict] = {}
         self._last_publish = 0.0
+        # Optional ambient temperature relayed from another device's topic.
+        self._ambient = AmbientTemp()
 
     # ---- lifecycle ----
 
@@ -428,6 +444,13 @@ class MqttPublisher:
                     self._known.clear()
                     if cfg.allow_controls:
                         await client.subscribe(f"{cfg.base_topic}/+/cmd/+", qos=cfg.qos)
+                    # Optional ambient temperature relay (plain-text topic on the
+                    # same broker). Subscribed regardless of allow_controls — it's
+                    # read-only.
+                    if cfg.ambient_temp_topic:
+                        await client.subscribe(cfg.ambient_temp_topic, qos=cfg.qos)
+                    if cfg.ambient_temp_status_topic:
+                        await client.subscribe(cfg.ambient_temp_status_topic, qos=cfg.qos)
 
                     # Keepalive + command loop, interruptible by stop().
                     stop_task = asyncio.ensure_future(self._stop.wait())
@@ -463,11 +486,25 @@ class MqttPublisher:
 
     async def _message_loop(self, client: Any) -> None:
         """Iterate inbound messages. Also surfaces disconnects as MqttError."""
+        cfg = get_config().mqtt
         async for message in client.messages:
             try:
-                await self._handle_command(message)
+                topic = str(message.topic)
+                if cfg.ambient_temp_topic and topic == cfg.ambient_temp_topic:
+                    self._ambient.update(self._payload_text(message))
+                elif cfg.ambient_temp_status_topic and topic == cfg.ambient_temp_status_topic:
+                    self._ambient.set_status(self._payload_text(message))
+                else:
+                    await self._handle_command(message)
             except Exception:  # noqa: BLE001
-                log.exception("MQTT command handling error")
+                log.exception("MQTT inbound handling error")
+
+    @staticmethod
+    def _payload_text(message: Any) -> str:
+        raw = message.payload
+        if isinstance(raw, (bytes, bytearray)):
+            return raw.decode("utf-8", "ignore").strip()
+        return str(raw).strip()
 
     # ---- publishing (called from the poller) ----
 
@@ -510,12 +547,15 @@ class MqttPublisher:
                         time.strftime("%a ", lt) + str(lt.tm_mday)
                         + time.strftime(" %b, %H:%M", lt)
                     )
+                amb = self._ambient.snapshot()
                 await client.publish(
                     f"{cfg.base_topic}/panel",
                     json.dumps(panel_feed(
                         miners, samples,
                         btc_usd=btc, btc_at=btc_at,
                         btc_chg=(btc_chg if btc is not None else None),
+                        temp_c=amb.current_c, temp_min_c=amb.min_c,
+                        temp_max_c=amb.max_c, temp_active=amb.has_data,
                     )),
                     qos=cfg.qos, retain=cfg.retain,
                 )

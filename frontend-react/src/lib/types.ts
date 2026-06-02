@@ -482,6 +482,8 @@ export interface SettingsCurrent {
     allow_controls: boolean;
     publish_interval_s: number;
     tls: boolean;
+    ambient_temp_topic?: string;
+    ambient_temp_status_topic?: string;
     mqtt_password_set?: boolean;
     connected?: boolean;
   };

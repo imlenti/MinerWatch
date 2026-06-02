@@ -39,6 +39,8 @@ export interface SettingsFormState {
   mqttFlatTopics: boolean;
   mqttAllowControls: boolean;
   mqttTls: boolean;
+  mqttAmbientTempTopic: string;
+  mqttAmbientStatusTopic: string;
   mqttConnected: boolean; // read-only status
 }
 
@@ -80,6 +82,8 @@ export function useSettingsForm(current: SettingsCurrent | null | undefined) {
       mqttFlatTopics: !!current.mqtt?.publish_flat_topics,
       mqttAllowControls: !!current.mqtt?.allow_controls,
       mqttTls: !!current.mqtt?.tls,
+      mqttAmbientTempTopic: current.mqtt?.ambient_temp_topic ?? '',
+      mqttAmbientStatusTopic: current.mqtt?.ambient_temp_status_topic ?? '',
       mqttConnected: !!current.mqtt?.connected,
     });
   }, [current]);
@@ -118,6 +122,8 @@ export function formToOverrides(form: SettingsFormState): Record<string, unknown
     'mqtt.publish_flat_topics': form.mqttFlatTopics,
     'mqtt.allow_controls': form.mqttAllowControls,
     'mqtt.tls': form.mqttTls,
+    'mqtt.ambient_temp_topic': form.mqttAmbientTempTopic.trim(),
+    'mqtt.ambient_temp_status_topic': form.mqttAmbientStatusTopic.trim(),
   };
   if (form.authPassword) overrides['auth.password'] = form.authPassword;
   if (form.telegramBotToken) overrides['alerts.telegram_bot_token'] = form.telegramBotToken;

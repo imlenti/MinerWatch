@@ -104,9 +104,32 @@ def test_panel_feed_btc_price_optional() -> None:
     assert "btc_at" not in feed
 
 
+def test_panel_feed_ambient_temp_optional() -> None:
+    miners = [{"id": 1, "mac": "AA:BB:CC:DD:EE:FF", "name": "M"}]
+
+    # Off by default — no temperature block.
+    feed = panel_feed(miners, {})
+    assert all(k not in feed for k in ("temp_c", "temp_min_c", "temp_max_c"))
+
+    # Active with a fresh value: all three present, rounded to 1 dp.
+    feed = panel_feed(miners, {}, temp_c=23.456, temp_min_c=17.9,
+                      temp_max_c=29.04, temp_active=True)
+    assert feed["temp_c"] == 23.5
+    assert feed["temp_min_c"] == 17.9
+    assert feed["temp_max_c"] == 29.0
+    assert json.loads(json.dumps(feed)) == feed
+
+    # Active but current unavailable (stale): temp_c is null, min/max kept.
+    feed = panel_feed(miners, {}, temp_c=None, temp_min_c=17.9,
+                      temp_max_c=29.0, temp_active=True)
+    assert feed["temp_c"] is None
+    assert feed["temp_min_c"] == 17.9 and feed["temp_max_c"] == 29.0
+
+
 if __name__ == "__main__":
     test_num_coercion()
     test_panel_feed_shape_names_and_values()
     test_panel_feed_missing_sample()
     test_panel_feed_btc_price_optional()
+    test_panel_feed_ambient_temp_optional()
     print("ok — panel_feed tests passed")
