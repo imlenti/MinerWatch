@@ -2,7 +2,7 @@ manifestVersion: 1
 id: imlenti-minerwatch
 category: bitcoin
 name: MinerWatch
-version: "1.9.5"
+version: "1.9.55"
 tagline: Real-time monitor for home Bitcoin miners
 description: >-
   MinerWatch is a self-hosted, local-first dashboard for small Bitcoin
