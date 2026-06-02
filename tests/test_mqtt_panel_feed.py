@@ -83,20 +83,24 @@ def test_panel_feed_btc_price_optional() -> None:
 
     # Omitted by default — the panel shows "--" until a price arrives.
     feed = panel_feed(miners, {})
-    assert "btc_usd" not in feed
-    assert "btc_at" not in feed
+    assert "btc_usd" not in feed and "btc_chg" not in feed and "btc_at" not in feed
 
-    # When provided, USD is rounded to an int and the stamp passes through.
-    feed = panel_feed(miners, {}, btc_usd=67432.81, btc_at="2026-06-01 14:35")
-    assert feed["btc_usd"] == 67433
-    assert feed["btc_at"] == "2026-06-01 14:35"
+    # When provided: USD rounds to int, change to 2dp, stamp passes through.
+    feed = panel_feed(miners, {}, btc_usd=70996.4, btc_chg=-3.927,
+                      btc_at="Tue 2 Jun, 05:52")
+    assert feed["btc_usd"] == 70996
     assert isinstance(feed["btc_usd"], int)
+    assert feed["btc_chg"] == -3.93
+    assert feed["btc_at"] == "Tue 2 Jun, 05:52"
     assert json.loads(json.dumps(feed)) == feed   # still JSON-serialisable
 
-    # A stamp without a price (shouldn't happen, but be defensive) only adds
-    # what it's given; an empty stamp is treated as absent.
-    feed = panel_feed(miners, {}, btc_usd=70000, btc_at="")
-    assert feed["btc_usd"] == 70000
+    # change/stamp are tied to the price: without a price they're dropped.
+    feed = panel_feed(miners, {}, btc_usd=None, btc_chg=1.5, btc_at="Tue 2 Jun, 05:52")
+    assert "btc_usd" not in feed and "btc_chg" not in feed and "btc_at" not in feed
+
+    # A positive change keeps its sign; an empty stamp is treated as absent.
+    feed = panel_feed(miners, {}, btc_usd=71000, btc_chg=2.5, btc_at="")
+    assert feed["btc_chg"] == 2.5
     assert "btc_at" not in feed
 
 
