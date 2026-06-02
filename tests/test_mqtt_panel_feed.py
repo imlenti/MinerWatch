@@ -78,8 +78,31 @@ def test_panel_feed_missing_sample() -> None:
     assert row["hr"] is None
 
 
+def test_panel_feed_btc_price_optional() -> None:
+    miners = [{"id": 1, "mac": "AA:BB:CC:DD:EE:FF", "name": "M"}]
+
+    # Omitted by default — the panel shows "--" until a price arrives.
+    feed = panel_feed(miners, {})
+    assert "btc_usd" not in feed
+    assert "btc_at" not in feed
+
+    # When provided, USD is rounded to an int and the stamp passes through.
+    feed = panel_feed(miners, {}, btc_usd=67432.81, btc_at="2026-06-01 14:35")
+    assert feed["btc_usd"] == 67433
+    assert feed["btc_at"] == "2026-06-01 14:35"
+    assert isinstance(feed["btc_usd"], int)
+    assert json.loads(json.dumps(feed)) == feed   # still JSON-serialisable
+
+    # A stamp without a price (shouldn't happen, but be defensive) only adds
+    # what it's given; an empty stamp is treated as absent.
+    feed = panel_feed(miners, {}, btc_usd=70000, btc_at="")
+    assert feed["btc_usd"] == 70000
+    assert "btc_at" not in feed
+
+
 if __name__ == "__main__":
     test_num_coercion()
     test_panel_feed_shape_names_and_values()
     test_panel_feed_missing_sample()
+    test_panel_feed_btc_price_optional()
     print("ok — panel_feed tests passed")

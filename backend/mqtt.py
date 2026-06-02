@@ -24,6 +24,7 @@ import re
 import time
 from typing import Any
 
+from . import btc_price
 from .config import get_config
 from .miners import driver_for_record, get_driver
 from .miners.base import MinerSample
@@ -171,7 +172,12 @@ def _num(value: Any) -> float | None:
         return None
 
 
-def panel_feed(miners: list[dict], samples: dict[int, MinerSample]) -> dict[str, Any]:
+def panel_feed(
+    miners: list[dict],
+    samples: dict[int, MinerSample],
+    btc_usd: float | None = None,
+    btc_at: str | None = None,
+) -> dict[str, Any]:
     """Consolidated single-topic blob for a constrained display (ESPHome panel).
 
     One compact JSON object, one entry per miner, with name/model resolved the
@@ -179,6 +185,12 @@ def panel_feed(miners: list[dict], samples: dict[int, MinerSample]) -> dict[str,
     to the fleet automatically. Published retained to ``<base>/panel``. Keys are
     short to keep the payload small for an ESP32: id, name, ip, model,
     hr (TH/s), pw (W), tp (chip C), vr (VR C), on (online bool).
+
+    Optionally carries a Bitcoin spot price for the panel's price screen:
+    ``btc_usd`` (integer USD) and ``btc_at`` (a preformatted "YYYY-MM-DD HH:MM"
+    stamp in the server's local time). Both are omitted when no price is
+    available, so the panel simply shows "--" until one arrives. Formatting the
+    stamp here keeps the firmware free of any clock/timezone setup.
     """
     out: list[dict[str, Any]] = []
     for rec in miners:
@@ -202,7 +214,12 @@ def panel_feed(miners: list[dict], samples: dict[int, MinerSample]) -> dict[str,
                 "on": bool(sample and getattr(sample, "online", False)),
             }
         )
-    return {"miners": out}
+    blob: dict[str, Any] = {"miners": out}
+    if btc_usd is not None:
+        blob["btc_usd"] = round(float(btc_usd))
+    if btc_at:
+        blob["btc_at"] = btc_at
+    return blob
 
 
 def _capabilities(family: str) -> Any:
@@ -477,9 +494,18 @@ class MqttPublisher:
             self._miners_by_mac = by_mac
             if cfg.publish_flat_topics:
                 # Single consolidated blob for the ESPHome panel (adaptive UI).
+                # Piggyback a BTC/USD spot price (+ "as of" stamp) so the panel's
+                # price screen needs no on-device HTTPS. Soft-fail: a None price
+                # just omits the fields and the panel shows "--".
+                btc = await btc_price.get_btc_usd()
+                btc_at = None
+                if btc is not None:
+                    ts = btc_price.last_fetched_ts()
+                    if ts:
+                        btc_at = time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
                 await client.publish(
                     f"{cfg.base_topic}/panel",
-                    json.dumps(panel_feed(miners, samples)),
+                    json.dumps(panel_feed(miners, samples, btc_usd=btc, btc_at=btc_at)),
                     qos=cfg.qos, retain=cfg.retain,
                 )
             if cfg.discovery_enabled:
