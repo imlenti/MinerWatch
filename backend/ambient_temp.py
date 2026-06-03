@@ -10,9 +10,13 @@ State kept here (mirrors a field-tested receiver):
   * current  — mean of the values seen in the last ``WINDOW_S`` seconds;
   * min/max  — extremes of the *real* values received this session (not the
                average), so a brief spike still registers;
-  * available — true only if a valid value arrived within ``AVAIL_S`` seconds
-               and the optional status topic isn't "offline". When false the
-               panel shows "-" for the current value but keeps min/max.
+  * available — true only if a valid value arrived within ``AVAIL_S`` seconds.
+               When false the panel shows "-" for the current value but keeps
+               min/max. Availability is based on data *freshness* only, NOT on
+               the status topic: a sensor that's truly offline stops sending, so
+               the reading goes stale on its own — while a stale *retained*
+               "offline" (a common Arduino LWT delivered the moment we
+               subscribe) must never hide a live reading.
 
 No I/O here — the MQTT client feeds ``update()`` / ``set_status()`` and reads
 ``snapshot()`` when publishing. Pure and unit-testable.
@@ -62,7 +66,11 @@ class AmbientTemp:
         return True
 
     def set_status(self, status: str) -> None:
-        """Record the optional publisher status (online/offline)."""
+        """Record the optional publisher status (online/offline).
+
+        Kept for reference/diagnostics only — availability is decided by data
+        freshness (see ``snapshot``), so this never suppresses a live reading.
+        """
         self._offline = str(status).strip().lower() == "offline"
 
     def _prune(self, now: float) -> None:
@@ -73,8 +81,9 @@ class AmbientTemp:
     def snapshot(self) -> AmbientSnapshot:
         now = time.monotonic()
         self._prune(now)
-        fresh = self._last_seen > 0 and (now - self._last_seen) <= AVAIL_S
-        available = fresh and not self._offline
+        # Freshness alone decides availability (see class docstring): a stale
+        # retained "offline" on the status topic must not hide live data.
+        available = self._last_seen > 0 and (now - self._last_seen) <= AVAIL_S
         if available and self._samples:
             current = sum(v for _, v in self._samples) / len(self._samples)
         else:

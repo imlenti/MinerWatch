@@ -51,13 +51,16 @@ def test_rejects_out_of_range() -> None:
     assert a.snapshot().has_data is False
 
 
-def test_offline_status_marks_unavailable_but_keeps_min_max() -> None:
+def test_offline_status_does_not_hide_fresh_reading() -> None:
+    # A stale retained "offline" (a common Arduino LWT, delivered the instant we
+    # subscribe) must NOT hide a live reading: availability is based on data
+    # freshness, not the status topic.
     a = AmbientTemp()
     a.update(21.0)
     a.set_status("offline")
     s = a.snapshot()
-    assert s.available is False
-    assert s.current_c is None       # current hidden when offline
+    assert s.available is True
+    assert s.current_c == 21.0
     assert s.min_c == 21.0 and s.max_c == 21.0 and s.has_data is True
 
 
@@ -66,5 +69,5 @@ if __name__ == "__main__":
     test_average_and_extremes()
     test_min_max_track_spikes_not_average()
     test_rejects_out_of_range()
-    test_offline_status_marks_unavailable_but_keeps_min_max()
+    test_offline_status_does_not_hide_fresh_reading()
     print("ok — ambient_temp tests passed")
