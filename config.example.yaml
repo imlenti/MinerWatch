@@ -49,7 +49,10 @@ alerts:
 auth:
   # If true, the API and UI require the bearer token (settings.password).
   enabled: false
-  # Token / password (if empty and enabled=true, it is generated on first startup).
+  # Token / password. This is NOT generated automatically: you must set it
+  # yourself (here, or via Settings in the UI). If enabled=true and this is
+  # left empty the app fails closed — every protected request returns 401 and
+  # a warning is logged at startup, so nobody can log in until a password is set.
   password: ""
 
 # Optional MQTT publisher — Home Assistant discovery + flat topics.
