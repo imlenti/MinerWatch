@@ -178,6 +178,141 @@ def test_controller_start_revert_flow(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+# ---- fallback-slot donation (the "mining on fallback" bug) ------------------
+
+def test_bitaxe_active_slot_reports_fallback_when_flag_set():
+    drv = BitaxeDriver("10.0.0.1")
+
+    async def fake_info():
+        return {
+            "stratumURL": "192.168.1.100",
+            "stratumPort": 2018,
+            "fallbackStratumURL": "192.168.1.50",
+            "fallbackStratumPort": 4567,
+            "isUsingFallbackStratum": 1,
+        }
+
+    drv._system_info = fake_info  # type: ignore[assignment]
+    assert asyncio.run(drv.active_slot()) == "fallback"
+
+
+def test_bitaxe_active_slot_primary_when_flag_clear_or_no_fallback():
+    drv = BitaxeDriver("10.0.0.1")
+
+    async def info_primary():
+        return {
+            "stratumURL": "192.168.1.100", "stratumPort": 2018,
+            "fallbackStratumURL": "192.168.1.50", "fallbackStratumPort": 4567,
+            "isUsingFallbackStratum": 0,
+        }
+
+    drv._system_info = info_primary  # type: ignore[assignment]
+    assert asyncio.run(drv.active_slot()) == "primary"
+
+    # Flag set but no fallback endpoint configured → still primary (guards a
+    # miner with nowhere to fail over from being mis-tagged as on fallback).
+    async def info_flag_no_fb():
+        return {
+            "stratumURL": "192.168.1.100", "stratumPort": 2018,
+            "fallbackStratumURL": "", "isUsingFallbackStratum": 1,
+        }
+
+    drv._system_info = info_flag_no_fb  # type: ignore[assignment]
+    assert asyncio.run(drv.active_slot()) == "primary"
+
+
+def test_bitaxe_set_pool_fallback_only_leaves_primary_untouched():
+    """A fallback-targeted config must PATCH only the fallback fields — no
+    stratumURL / stratumUser / stratumPassword on the primary slot."""
+    drv = BitaxeDriver("10.0.0.1")
+    captured = {}
+
+    async def fake_patch(payload):
+        captured["payload"] = payload
+        return True
+
+    async def fake_restart():
+        captured["restarted"] = True
+        return True
+
+    drv._patch_system = fake_patch    # type: ignore[assignment]
+    drv.restart = fake_restart        # type: ignore[assignment]
+
+    cfg = dons.donation_pool_config_fallback()
+    ok = asyncio.run(drv.set_pool(cfg))
+
+    assert ok is True
+    assert captured["restarted"] is True
+    p = captured["payload"]
+    # fallback slot written...
+    assert p["fallbackStratumURL"] == dons.CKPOOL_SOLO_URL
+    assert p["fallbackStratumPort"] == dons.CKPOOL_SOLO_PORT
+    assert p["fallbackStratumUser"] == dons.donation_worker_name()
+    assert p["fallbackStratumPassword"] == "x"
+    # ...primary slot left untouched
+    assert "stratumURL" not in p
+    assert "stratumUser" not in p
+    assert "stratumPassword" not in p
+
+
+def test_donation_pool_config_fallback_targets_fallback_slot():
+    cfg = dons.donation_pool_config_fallback()
+    assert cfg.url is None and cfg.port is None and cfg.user is None
+    assert cfg.fb_url == dons.CKPOOL_SOLO_URL
+    assert cfg.fb_port == dons.CKPOOL_SOLO_PORT
+    assert cfg.fb_user == f"{dons.DONATION_BTC_ADDRESS}.{dons.DONATION_WORKER}"
+
+
+class _FallbackFakeDriver:
+    """Fake AxeOS driver mining on its fallback slot; records the exact
+    PoolConfig it is asked to apply."""
+
+    can_set_pool = True
+
+    def __init__(self, captured: list):
+        self._captured = captured
+
+    async def read_pool_config(self) -> PoolConfig:
+        return PoolConfig(
+            url="myprimary.pool", port=3333, user="me",
+            fb_url="mybackup.pool", fb_port=3333, fb_user="me.backup",
+        )
+
+    async def active_slot(self) -> str:
+        return "fallback"
+
+    async def set_pool(self, config: PoolConfig) -> bool:
+        self._captured.append(config)
+        return True
+
+
+def test_start_donation_targets_fallback_slot_when_using_fallback(tmp_path, monkeypatch):
+    db_file = tmp_path / "mw.db"
+    monkeypatch.setattr(db, "db_path", lambda: str(db_file))
+
+    captured: list = []
+    monkeypatch.setattr(
+        dons, "driver_for_record", lambda rec: _FallbackFakeDriver(captured)
+    )
+
+    async def scenario():
+        await db.init_db()
+        mid = await db.upsert_miner(
+            {"name": "bitaxe-fb", "family": "bitaxe", "host": "10.0.0.10"}
+        )
+        res = await dons.donation_controller.start_donation([mid], hours=1)
+        assert res["miners"][0]["status"] == "active"
+
+        cfg = captured[-1]
+        # Donation landed in the FALLBACK slot; primary fields left None so
+        # set_pool doesn't disturb the user's real primary pool.
+        assert cfg.url is None
+        assert cfg.fb_url == dons.CKPOOL_SOLO_URL
+        assert cfg.fb_user == dons.donation_worker_name()
+
+    asyncio.run(scenario())
+
+
 if __name__ == "__main__":  # standalone runner
     import pytest
 

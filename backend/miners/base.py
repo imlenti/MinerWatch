@@ -590,6 +590,20 @@ class MinerDriver:
         """
         raise NotImplementedError
 
+    async def active_slot(self) -> "str | None":
+        """Return which configured pool slot the miner is *currently*
+        mining on: ``"primary"``, ``"fallback"``, or ``None`` when the
+        driver can't tell (the default).
+
+        The donation flow uses this to repoint whichever slot is live. A
+        miner that has failed over to its fallback keeps mining the
+        fallback after a restart (AxeOS persists ``isUsingFallbackStratum``
+        in NVS), so rewriting only the primary slot would never take
+        effect. Drivers that don't override this behave as before — the
+        caller treats ``None`` as "primary".
+        """
+        return None
+
     # ---- Helpers ----
 
     def __repr__(self) -> str:  # pragma: no cover

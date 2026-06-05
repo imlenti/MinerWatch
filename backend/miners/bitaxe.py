@@ -364,9 +364,9 @@ class BitaxeDriver(MinerDriver):
             payload["stratumURL"] = host
             if port is not None:
                 payload["stratumPort"] = port
-        if config.user is not None:
-            payload["stratumUser"] = config.user
-        payload["stratumPassword"] = config.password or "x"
+            if config.user is not None:
+                payload["stratumUser"] = config.user
+            payload["stratumPassword"] = config.password or "x"
         # Restore the fallback slot too when the snapshot carried one, so
         # revert is faithful for users who had a custom backup pool.
         if config.fb_url is not None:
@@ -383,6 +383,24 @@ class BitaxeDriver(MinerDriver):
             # AxeOS only picks up a new stratum after a restart.
             await self.restart()
         return ok
+
+    async def active_slot(self) -> str | None:
+        """Report which stratum slot AxeOS is currently mining on.
+
+        Reads ``isUsingFallbackStratum`` from ``/api/system/info`` and
+        returns ``"fallback"`` when it's set *and* a fallback endpoint is
+        configured (same guard as :meth:`_parse`), else ``"primary"``.
+        Returns ``None`` only when the miner can't be read, so the caller
+        falls back to its default (primary) rather than guessing.
+        """
+        try:
+            data = await self._system_info()
+        except Exception:  # noqa: BLE001
+            return None
+        fb_url = data.get("fallbackStratumURL") or data.get("fallbackStratumUrl")
+        if _coerce_flag(data.get("isUsingFallbackStratum")) and fb_url:
+            return "fallback"
+        return "primary"
 
 
 def _opt_float(value: Any) -> float | None:

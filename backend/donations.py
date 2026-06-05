@@ -76,6 +76,24 @@ def donation_pool_config() -> PoolConfig:
     )
 
 
+def donation_pool_config_fallback() -> PoolConfig:
+    """The donation pool written into the *fallback* slot only.
+
+    Used when a miner is currently mining on its fallback stratum
+    (``isUsingFallbackStratum=1``): repointing the primary slot would have
+    no effect because AxeOS stays on the fallback after the restart.
+    Leaving the primary fields ``None`` makes ``set_pool`` touch only the
+    fallback slot, so the user's primary config is preserved and the revert
+    (which restores the full snapshot) stays faithful.
+    """
+    return PoolConfig(
+        fb_url=CKPOOL_SOLO_URL,
+        fb_port=CKPOOL_SOLO_PORT,
+        fb_user=donation_worker_name(),
+        fb_password="x",
+    )
+
+
 def _driver_for(miner: dict[str, Any]):
     cfg = get_config()
     return driver_for_record({**miner, "timeout": cfg.polling.request_timeout})
@@ -152,10 +170,14 @@ class DonationController:
         hours = max(MIN_DONATION_HOURS, min(MAX_DONATION_HOURS, float(hours)))
         ends_ts = int(time.time() + hours * 3600)
         busy = await db.active_donation_miner_ids()
-        target = donation_pool_config()
 
         results: list[dict[str, Any]] = []
-        prepared: list[tuple[int, dict[str, Any], Any, PoolConfig]] = []
+        # Each prepared entry also carries a per-miner donation target: a
+        # miner already mining on its fallback slot is repointed there
+        # rather than on the primary (see donation_pool_config_fallback).
+        prepared: list[
+            tuple[int, dict[str, Any], Any, PoolConfig, PoolConfig]
+        ] = []
 
         # de-dupe while preserving order
         seen: set[int] = set()
@@ -186,7 +208,25 @@ class DonationController:
                     "error": f"could not read current pool: {exc}",
                 })
                 continue
-            prepared.append((mid, miner, drv, prev))
+
+            # Repoint whichever slot the miner is actually mining on. If it
+            # has failed over to its fallback, rewriting the primary slot
+            # would never take effect (AxeOS stays on the fallback after the
+            # restart), so target the fallback slot instead. Drivers without
+            # active_slot() default to primary — i.e. today's behaviour.
+            slot = "primary"
+            slot_reader = getattr(drv, "active_slot", None)
+            if slot_reader is not None:
+                try:
+                    slot = (await slot_reader()) or "primary"
+                except Exception:  # noqa: BLE001
+                    slot = "primary"
+            target = (
+                donation_pool_config_fallback()
+                if slot == "fallback"
+                else donation_pool_config()
+            )
+            prepared.append((mid, miner, drv, prev, target))
 
         if not prepared:
             return {"donation_id": None, "ends_ts": ends_ts, "miners": results}
@@ -194,7 +234,7 @@ class DonationController:
         donation_id = await db.create_donation(ends_ts, donation_worker_name())
         now = int(time.time())
 
-        for mid, miner, drv, prev in prepared:
+        for mid, miner, drv, prev, target in prepared:
             prev_json = prev.to_json()
             err: str | None = None
             try:
