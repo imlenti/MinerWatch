@@ -51,7 +51,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   web:
-    image: ghcr.io/imlenti/minerwatch:1.10.2
+    image: ghcr.io/imlenti/minerwatch:1.10.3
     # NOTE: no `user:` override. The image's entrypoint starts as root only to
     # fix ownership of the bind-mounted data dir, then drops to UID/GID 1000
     # itself (via gosu). Pinning `user:` here would prevent that chown and
