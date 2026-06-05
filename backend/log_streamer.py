@@ -71,10 +71,16 @@ except Exception:  # noqa: BLE001  pragma: no cover
 # DB); `nerdoctaxe` is the multi-ASIC fork, also AxeOS-derived.
 AXEOS_FAMILIES = {"bitaxe", "nerdoctaxe"}
 
-# How many recent share events to keep per miner for the live chart.
-# At a typical home-miner result rate (~1/s) this is ~30 min of history,
-# which is plenty for the scrolling scatter plot and bounds memory.
-RING_BUFFER = 2000
+# Per-miner ring buffer for the live chart. Retention is primarily
+# TIME-based (RING_BUFFER_SECONDS): a pure count cap spans far less
+# wall-clock time for a high-throughput multi-ASIC board (e.g. the
+# SupraHex, which logs results several times faster than a single-ASIC
+# Gamma) than for a slow one, so a fast miner's older shares fell out of
+# the snapshot and "dropped off" the left of the chart while slow miners
+# still scrolled the full window. RING_BUFFER is the count backstop
+# (a hard memory bound) layered on top of the time window.
+RING_BUFFER = 20000
+RING_BUFFER_SECONDS = 15 * 60  # ≥ the longest frontend chart range (10m) + margin
 
 # A share is "notable" — worth persisting to the Hall of Fame — when its
 # difficulty clears this floor. On a solo pool the vardiff target is
@@ -380,6 +386,14 @@ class LogStreamer:
             submitted=submitted,
         )
         stream.buffer.append(ev)
+        # Time-based retention on top of the deque's count cap: drop events
+        # older than the chart window so a fast miner keeps the same time
+        # span as a slow one. Expired events are always at the front (ts
+        # ascending), so this is amortised O(1) per result.
+        cutoff = now - RING_BUFFER_SECONDS
+        buf = stream.buffer
+        while buf and buf[0].ts < cutoff:
+            buf.popleft()
         if submitted:
             stream.submitted_total += 1
             stream.pending.append(ev)

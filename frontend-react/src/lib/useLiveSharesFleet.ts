@@ -23,7 +23,29 @@ import type { LiveShareEvent, LiveSharesStats } from '@/lib/types';
 // itself doesn't try to be clever about backoff — that's the
 // browser's job.
 
-const MAX_PER_MINER = 1000;
+// Retention is TIME-based, not count-based. A pure per-miner count cap
+// evicts a high-throughput miner's older events within a few minutes:
+// a multi-ASIC SupraHex (6× BM1368, ~5-6 TH/s) logs results several
+// times faster than a single-ASIC Gamma, so a 1000-event cap covered
+// only ~5 min for the Hex while the Gamma's 1000 events still spanned
+// the whole 10-min window — the Hex "dropped off" the left of the chart.
+// Keeping the last RETENTION_MS of events instead gives every miner the
+// same time span regardless of rate. HARD_CAP is only a memory backstop
+// for a pathological result rate.
+const RETENTION_MS = 15 * 60 * 1000; // ≥ the longest selectable range (10m) + margin
+const HARD_CAP = 20000;
+
+// Drop events older than the retention window, then clamp to HARD_CAP.
+// Events are appended in arrival order (ts ascending), so expired ones
+// are always at the front — the while-loop is amortised O(1) per push.
+function pruneByTime<T extends { ts: number }>(events: T[], now: number): T[] {
+  const cutoff = now - RETENTION_MS;
+  let start = 0;
+  while (start < events.length && events[start].ts < cutoff) start += 1;
+  let out = start > 0 ? events.slice(start) : events;
+  if (out.length > HARD_CAP) out = out.slice(out.length - HARD_CAP);
+  return out;
+}
 
 export interface LiveShareEventWithMiner extends LiveShareEvent {
   minerId: number;
@@ -106,7 +128,7 @@ export function useLiveSharesFleet(minerIds: number[]): LiveSharesFleetState {
             .map((e: LiveShareEvent) => ({ ...e, minerId: id }));
           setState((prev) => ({
             ...prev,
-            eventsByMiner: { ...prev.eventsByMiner, [id]: evs.slice(-MAX_PER_MINER) },
+            eventsByMiner: { ...prev.eventsByMiner, [id]: pruneByTime(evs, Date.now()) },
             statsByMiner: { ...prev.statsByMiner, [id]: payload.stats ?? null },
             connectedByMiner: { ...prev.connectedByMiner, [id]: true },
           }));
@@ -121,8 +143,9 @@ export function useLiveSharesFleet(minerIds: number[]): LiveSharesFleetState {
           const e: LiveShareEventWithMiner = { ...raw, minerId: id };
           setState((prev) => {
             const cur = prev.eventsByMiner[id] ?? [];
-            const next = cur.length >= MAX_PER_MINER ? cur.slice(cur.length - MAX_PER_MINER + 1) : cur.slice();
+            const next = cur.slice();
             next.push(e);
+            const pruned = pruneByTime(next, Date.now());
             const curStats = prev.statsByMiner[id] ?? null;
             const nextStats = curStats
               ? {
@@ -135,7 +158,7 @@ export function useLiveSharesFleet(minerIds: number[]): LiveSharesFleetState {
               : curStats;
             return {
               ...prev,
-              eventsByMiner: { ...prev.eventsByMiner, [id]: next },
+              eventsByMiner: { ...prev.eventsByMiner, [id]: pruned },
               statsByMiner: { ...prev.statsByMiner, [id]: nextStats },
             };
           });

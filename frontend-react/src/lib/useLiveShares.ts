@@ -13,9 +13,25 @@ import type { LiveShareEvent, LiveSharesStats } from '@/lib/types';
 //   - "verdict":  the pool's accept/reject for a previously-submitted
 //      share (matched by `seq`).
 //
-// We keep at most MAX_EVENTS in memory; the chart windows further.
+// Retention is TIME-based, not count-based, so a high-throughput miner
+// keeps the same time span as a slow one (a pure count cap made fast
+// multi-ASIC boards like the SupraHex drop off the chart early — their
+// older events were evicted within a few minutes). Keep the last
+// RETENTION_MS of events; HARD_CAP is only a memory backstop.
 
-const MAX_EVENTS = 2000;
+const RETENTION_MS = 15 * 60 * 1000; // ≥ the longest chart range (10m) + margin
+const HARD_CAP = 20000;
+
+// Drop events older than the retention window, then clamp to HARD_CAP.
+// Events arrive in ts-ascending order, so expired ones are at the front.
+function pruneByTime<T extends { ts: number }>(events: T[], now: number): T[] {
+  const cutoff = now - RETENTION_MS;
+  let start = 0;
+  while (start < events.length && events[start].ts < cutoff) start += 1;
+  let out = start > 0 ? events.slice(start) : events;
+  if (out.length > HARD_CAP) out = out.slice(out.length - HARD_CAP);
+  return out;
+}
 
 export interface LiveSharesState {
   events: LiveShareEvent[];
@@ -48,7 +64,7 @@ export function useLiveShares(minerId: number | undefined): LiveSharesState {
       try {
         const payload = JSON.parse((ev as MessageEvent).data);
         const evs: LiveShareEvent[] = (payload.events ?? []).map(toMs);
-        setEvents(evs.slice(-MAX_EVENTS));
+        setEvents(pruneByTime(evs, Date.now()));
         setStats(payload.stats ?? null);
         setConnected(true);
       } catch {
@@ -60,9 +76,9 @@ export function useLiveShares(minerId: number | undefined): LiveSharesState {
       try {
         const e = toMs(JSON.parse((ev as MessageEvent).data));
         setEvents((prev) => {
-          const next = prev.length >= MAX_EVENTS ? prev.slice(prev.length - MAX_EVENTS + 1) : prev.slice();
+          const next = prev.slice();
           next.push(e);
-          return next;
+          return pruneByTime(next, Date.now());
         });
         setStats((prev) =>
           prev
