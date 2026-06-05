@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS miners (
     guardian_enabled        INTEGER DEFAULT 0,  -- 0/1 per-miner opt-in
     guardian_max_freq_mhz   INTEGER,            -- ceiling (defaults to current freq at enable time)
     guardian_freq_floor_mhz INTEGER,            -- optional floor override (NULL → global default)
+    guardian_temp_source    TEXT,               -- vr (default) or chip — which sensor governs frequency
+    guardian_max_temp_c     REAL,               -- per-miner max temp / high threshold (NULL → source default)
     last_seen_ts    INTEGER,
     last_status     TEXT,                 -- online | offline | error
     extra           TEXT,                 -- free-form JSON
@@ -361,6 +363,8 @@ def _init_db_sync() -> None:
             "ALTER TABLE miners ADD COLUMN guardian_enabled INTEGER DEFAULT 0",
             "ALTER TABLE miners ADD COLUMN guardian_max_freq_mhz INTEGER",
             "ALTER TABLE miners ADD COLUMN guardian_freq_floor_mhz INTEGER",
+            "ALTER TABLE miners ADD COLUMN guardian_temp_source TEXT",
+            "ALTER TABLE miners ADD COLUMN guardian_max_temp_c REAL",
         ]:
             try:
                 conn.execute(column_def)
@@ -1519,17 +1523,23 @@ async def set_guardian_config(
     enabled: bool | None = None,
     max_freq_mhz: int | None = None,
     freq_floor_mhz: int | None = None,
+    temp_source: str | None = None,
+    max_temp_c: float | None = None,
 ) -> None:
     """Update the Guardian settings for a miner.
 
     All fields are optional: pass only the ones you want to change, the
     others are left untouched (COALESCE). ``enabled`` is stored as 0/1.
+    ``temp_source`` is "vr" | "chip" (which sensor governs frequency) and
+    ``max_temp_c`` is the per-miner high threshold (the recovery point is
+    derived from it at decision time).
 
     Note: COALESCE means a value can't be reset back to NULL here (mirrors
     set_fan_config). That's intentional — clearing the ceiling/floor isn't a
     supported operation; the caller sets a concrete value or leaves it.
     """
     enabled_int = None if enabled is None else (1 if enabled else 0)
+    source = None if temp_source is None else str(temp_source).lower()
     async with connect() as conn:
         await conn.execute(
             """
@@ -1537,6 +1547,8 @@ async def set_guardian_config(
               guardian_enabled = COALESCE(?, guardian_enabled),
               guardian_max_freq_mhz = COALESCE(?, guardian_max_freq_mhz),
               guardian_freq_floor_mhz = COALESCE(?, guardian_freq_floor_mhz),
+              guardian_temp_source = COALESCE(?, guardian_temp_source),
+              guardian_max_temp_c = COALESCE(?, guardian_max_temp_c),
               updated_at = ?
             WHERE id = ?
             """,
@@ -1544,6 +1556,8 @@ async def set_guardian_config(
                 enabled_int,
                 max_freq_mhz,
                 freq_floor_mhz,
+                source,
+                max_temp_c,
                 now_ts(),
                 miner_id,
             ),

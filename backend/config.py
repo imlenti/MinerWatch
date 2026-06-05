@@ -143,6 +143,16 @@ class GuardianCfg:
     # watchdog watches the chip). 65–70 °C is the hysteresis deadband.
     vr_high_c: float = 70.0           # above → step frequency down
     vr_low_c: float = 65.0            # below → step frequency up (recover)
+    # Chip (ASIC) thresholds — used when a miner's Guardian temperature source
+    # is set to "chip" instead of the default "vr". 60 °C is the usual Bitaxe
+    # chip target, so this governs the chip toward the same point the auto-fan
+    # PID already aims for: once the fan saturates and the chip drifts above
+    # 60 °C the Guardian trims frequency, recovering below 55 °C. Same 5 °C
+    # hysteresis deadband as the VR, with the 75 °C overheat watchdog still
+    # underneath as the hard net. A per-miner ``guardian_max_temp_c`` overrides
+    # the high point.
+    chip_high_c: float = 60.0         # above → step frequency down
+    chip_low_c: float = 55.0          # below → step frequency up (recover)
     # Rejected-share % over the interval = Δrejected / Δ(accepted+rejected)
     # × 100. This replaces the old errorCount/total HW% which was bogus on
     # AxeOS (its hashrateMonitor `total` is the hashrate, not a work counter,
@@ -184,6 +194,20 @@ class GuardianCfg:
     v2_voltage_step_mv: int = 10
     v2_voltage_ceiling_mv: int = 1300
     v2_voltage_floor_mv: int = 1000
+
+    def temp_band(self, source: str | None) -> tuple[float, float]:
+        """``(high_c, low_c)`` default thresholds for a temperature source.
+
+        ``source`` is the per-miner ``guardian_temp_source`` ("vr" | "chip").
+        Anything other than "chip" (including ``None`` / unknown) falls back to
+        the VR band, so an unset value behaves exactly like before this knob
+        existed — VR-governed. The gap between the two is the hysteresis
+        deadband, reused to derive the recovery point when a miner overrides
+        only the high threshold via ``guardian_max_temp_c``.
+        """
+        if str(source or "").lower() == "chip":
+            return self.chip_high_c, self.chip_low_c
+        return self.vr_high_c, self.vr_low_c
 
 
 @dataclass

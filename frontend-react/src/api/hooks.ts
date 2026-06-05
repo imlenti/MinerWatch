@@ -370,6 +370,8 @@ interface GuardianConfigPayload {
   enabled?: boolean;
   max_freq_mhz?: number;
   freq_floor_mhz?: number;
+  temp_source?: 'vr' | 'chip';
+  max_temp_c?: number;
 }
 
 export function useSetGuardianConfig(minerId: number) {

@@ -1181,6 +1181,13 @@ class GuardianConfigPayload(BaseModel):
     max_freq_mhz: Optional[int] = Field(default=None, ge=100, le=2000)
     # Optional floor override; when omitted the global default is used.
     freq_floor_mhz: Optional[int] = Field(default=None, ge=100, le=2000)
+    # Which sensor governs frequency: "vr" (default) or "chip". Validated in
+    # the endpoint so a bad value returns a clear 400.
+    temp_source: Optional[str] = None
+    # Per-miner max temperature (the high threshold); the recovery point is
+    # derived from it server-side. Wide bounds here; the chip-mode vs 75°C
+    # watchdog guard is enforced in the endpoint where the source is known.
+    max_temp_c: Optional[float] = Field(default=None, ge=40, le=110)
 
 
 def _miner_current_freq(miner_id: int) -> int | None:
@@ -1221,11 +1228,16 @@ async def api_guardian_status(miner_id: int) -> dict:
         "miner_enabled": bool(miner.get("guardian_enabled")),
         "max_freq_mhz": miner.get("guardian_max_freq_mhz"),
         "freq_floor_mhz": miner.get("guardian_freq_floor_mhz"),
+        "temp_source": (miner.get("guardian_temp_source") or "vr"),
+        "max_temp_c": miner.get("guardian_max_temp_c"),
         "current_freq_mhz": current,
         "defaults": {
             "interval_seconds": g.interval_seconds,
             "vr_high_c": g.vr_high_c,
             "vr_low_c": g.vr_low_c,
+            "chip_high_c": g.chip_high_c,
+            "chip_low_c": g.chip_low_c,
+            "watchdog_c": 75.0,  # auto_control.WATCHDOG_OVERHEAT_C (chip hard net)
             "reject_pct_max": g.reject_pct_max,
             "step_down_vr_mhz": g.step_down_vr_mhz,
             "step_down_err_mhz": g.step_down_err_mhz,
@@ -1251,6 +1263,31 @@ async def api_guardian_config(miner_id: int, payload: GuardianConfigPayload) -> 
             400, "the Guardian is only supported on Bitaxe/Nerd* miners"
         )
 
+    # Validate the temperature source if provided.
+    source = payload.temp_source
+    if source is not None:
+        source = source.lower()
+        if source not in ("vr", "chip"):
+            raise HTTPException(400, "temp_source must be 'vr' or 'chip'")
+
+    # Chip-mode guard: the chip is already protected by the 75°C overheat
+    # watchdog (auto_control.WATCHDOG_OVERHEAT_C) and held near ~60°C by the
+    # fan PID. A chip max at/above the watchdog is meaningless — the hard net
+    # fires first — so reject it with a hint. We check against the *effective*
+    # source (this request's value, else what's already stored) so setting the
+    # temperature in a separate call from the source is still guarded.
+    effective_source = source or (miner.get("guardian_temp_source") or "vr")
+    if (
+        payload.max_temp_c is not None
+        and effective_source == "chip"
+        and payload.max_temp_c >= 75
+    ):
+        raise HTTPException(
+            400,
+            "in chip mode the max temperature must be below the 75°C overheat "
+            "watchdog — choose a lower value",
+        )
+
     # On first enable, default the ceiling to the current frequency so the
     # governor can only hold/back off until the user raises the cap.
     max_freq = payload.max_freq_mhz
@@ -1272,6 +1309,8 @@ async def api_guardian_config(miner_id: int, payload: GuardianConfigPayload) -> 
         enabled=payload.enabled,
         max_freq_mhz=max_freq,
         freq_floor_mhz=payload.freq_floor_mhz,
+        temp_source=source,
+        max_temp_c=payload.max_temp_c,
     )
     return {"ok": True, "max_freq_mhz": max_freq}
 

@@ -26,6 +26,8 @@ export interface MinerRecord {
   guardian_enabled: number | null;          // 0 | 1 (SQLite int)
   guardian_max_freq_mhz: number | null;      // ceiling ("max frequency")
   guardian_freq_floor_mhz: number | null;    // optional floor override
+  guardian_temp_source: string | null;       // 'vr' (default) | 'chip'
+  guardian_max_temp_c: number | null;         // per-miner max temp (high threshold)
   last_status: string | null;
 }
 
@@ -559,6 +561,10 @@ export interface GuardianLive {
   frequency_mhz: number | null;
   ceiling_mhz: number | null;
   floor_mhz: number | null;
+  // Governed sensor reading + which sensor it is. ``vr_temp_c`` is kept for
+  // backward compatibility (populated only in VR mode).
+  temp_c: number | null;
+  temp_source: 'vr' | 'chip';
   vr_temp_c: number | null;
   reject_pct: number | null;
   reason: string;
@@ -572,6 +578,9 @@ export interface GuardianDefaults {
   interval_seconds: number;
   vr_high_c: number;
   vr_low_c: number;
+  chip_high_c: number;
+  chip_low_c: number;
+  watchdog_c: number;      // 75°C chip overheat watchdog (chip-mode upper bound)
   reject_pct_max: number;
   step_down_vr_mhz: number;
   step_down_err_mhz: number;
@@ -585,6 +594,8 @@ export interface GuardianStatusResponse {
   miner_enabled: boolean;  // per-miner opt-in
   max_freq_mhz: number | null;
   freq_floor_mhz: number | null;
+  temp_source: 'vr' | 'chip';   // which sensor governs frequency
+  max_temp_c: number | null;    // per-miner high threshold (null → source default)
   current_freq_mhz: number | null;
   defaults: GuardianDefaults;
   live: GuardianLive | null;

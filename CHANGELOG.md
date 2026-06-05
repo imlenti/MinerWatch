@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.3] — 2026-06-05
+
+### Added
+
+- **Guardian: per-miner max temperature.** The temperature the Guardian backs
+  off at is now an editable per-miner field (Advanced tab) instead of a fixed
+  global threshold. You set a single "max" number; the recovery point is
+  derived from it (max − the source's hysteresis deadband), so each miner can
+  carry its own ceiling. Unset miners keep the global default, so existing
+  setups are unchanged.
+- **Guardian: choose the temperature source (VR or ASIC chip).** A per-miner
+  toggle picks which sensor governs frequency. VR stays the default and the
+  recommendation — nothing else governs it in a closed loop. Chip mode is
+  available for setups that want it, with the caveat (surfaced in the UI) that
+  the chip is already driven by the fan PID and the 75 °C overheat watchdog, so
+  a chip-driven governor only bites once the fan is saturated; the API rejects a
+  chip max at/above 75 °C so it can never shadow the hard watchdog.
+- **Guardian: at-your-own-risk confirmation on enable.** Turning the Guardian on
+  for a miner now opens a confirmation dialog noting it is an advanced feature
+  used at the operator's own risk, recommending they stay near the miner the
+  first time. Declining leaves the Guardian off. Disabling is unchanged (no
+  prompt).
+
 ## [1.10.2] — 2026-06-05
 
 ### Fixed

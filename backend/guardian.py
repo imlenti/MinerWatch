@@ -84,14 +84,15 @@ def decide_frequency(
     current_freq: int,
     ceiling_mhz: int,
     floor_mhz: int,
-    vr_temp_c: float | None,
+    temp_c: float | None,
     hw_error_pct: float | None,
-    vr_high_c: float,
-    vr_low_c: float,
+    temp_high_c: float,
+    temp_low_c: float,
     hw_error_pct_max: float,
-    step_down_vr_mhz: int,
+    step_down_temp_mhz: int,
     step_down_err_mhz: int,
     step_up_mhz: int,
+    source_label: str = "VR",
 ) -> tuple[int, str]:
     """Decide the next frequency for one miner.
 
@@ -100,12 +101,15 @@ def decide_frequency(
     is deliberately pure so the policy can be reasoned about and tested in
     isolation from the driver/poller plumbing.
 
-    ``hw_error_pct`` is the instability signal — in v1 the rejected-share %
-    over the interval. It (and ``vr_temp_c``) may be ``None``: a ``None``
-    simply disables the branch that depends on it. So with no VR reading the
-    governor won't move on temperature, and when too few shares landed in the
-    interval to trust a reject % the error branch is skipped and VR governs
-    alone. The function stays source-agnostic: it only sees "a percentage".
+    The temperature signal is source-agnostic: ``temp_c`` is whichever sensor
+    the caller chose (the VR by default, or the ASIC chip per-miner) and
+    ``temp_high_c`` / ``temp_low_c`` are the matching thresholds; ``source_label``
+    only flavours the human-readable reason string. ``hw_error_pct`` is the
+    instability signal — in v1 the rejected-share % over the interval. Both
+    ``temp_c`` and ``hw_error_pct`` may be ``None``: a ``None`` simply disables
+    the branch that depends on it. So with no temperature reading the governor
+    won't move on heat, and when too few shares landed in the interval to trust
+    a reject % the error branch is skipped and temperature governs alone.
     """
     # Defensive: a mis-set floor above the ceiling must not brick the loop.
     if floor_mhz > ceiling_mhz:
@@ -121,18 +125,24 @@ def decide_frequency(
 
     # 1..3 — the control law. Order encodes the priority: back off on heat,
     # then on instability, and only otherwise try to recover frequency.
-    if vr_temp_c is not None and vr_temp_c > vr_high_c:
-        target = current_freq - step_down_vr_mhz
-        reason = f"VR {vr_temp_c:.1f}°C > {vr_high_c:.0f}°C → -{step_down_vr_mhz} MHz"
+    if temp_c is not None and temp_c > temp_high_c:
+        target = current_freq - step_down_temp_mhz
+        reason = (
+            f"{source_label} {temp_c:.1f}°C > {temp_high_c:.0f}°C "
+            f"→ -{step_down_temp_mhz} MHz"
+        )
     elif hw_error_pct is not None and hw_error_pct > hw_error_pct_max:
         target = current_freq - step_down_err_mhz
         reason = (
             f"Reject {hw_error_pct:.2f}% > {hw_error_pct_max:.2f}% "
             f"→ -{step_down_err_mhz} MHz"
         )
-    elif vr_temp_c is not None and vr_temp_c < vr_low_c:
+    elif temp_c is not None and temp_c < temp_low_c:
         target = current_freq + step_up_mhz
-        reason = f"VR {vr_temp_c:.1f}°C < {vr_low_c:.0f}°C → +{step_up_mhz} MHz"
+        reason = (
+            f"{source_label} {temp_c:.1f}°C < {temp_low_c:.0f}°C "
+            f"→ +{step_up_mhz} MHz"
+        )
     else:
         return current_freq, "hold (within deadband)"
 
@@ -158,7 +168,7 @@ class _GuardianState:
         "last_change_ts",
         "last_reason",
         "last_ts",
-        "last_vr_c",
+        "last_temp_c",
         "last_reject_pct",
     )
 
@@ -169,7 +179,7 @@ class _GuardianState:
         self.last_change_ts: float = 0.0
         self.last_reason: str | None = None
         self.last_ts: float = 0.0
-        self.last_vr_c: float | None = None
+        self.last_temp_c: float | None = None
         self.last_reject_pct: float | None = None
 
 
@@ -326,19 +336,27 @@ class GuardianController:
 
         # Reject % over the interval (advances the baseline as a side effect).
         reject_pct = _reject_pct(state, sample, gcfg.reject_min_shares)
-        vr_c = sample.temp_vr_c
+
+        # Which sensor governs frequency for this miner: VR (default) or the
+        # ASIC chip. Both are reported by every AxeOS family (Nerd* inherits the
+        # Bitaxe parser). An unset/unknown value behaves like "vr" — the legacy
+        # behaviour. In chip mode the chip is also driven by the fan PID and the
+        # 75°C watchdog, so the governor only bites once the fan is saturated.
+        source = "chip" if str(miner.get("guardian_temp_source") or "").lower() == "chip" else "vr"
+        temp_c = sample.temp_chip_c if source == "chip" else sample.temp_vr_c
+        source_label = "Chip" if source == "chip" else "VR"
 
         # Always record the latest reading for the status endpoint, even if we
         # can't act this tick.
         now = time.time()
         state.last_ts = now
-        state.last_vr_c = vr_c
+        state.last_temp_c = temp_c
         state.last_reject_pct = reject_pct
 
         if current_freq is None:
             # Can't govern without knowing the frequency.
-            self._publish(miner_id, miner, current_freq, vr_c, reject_pct,
-                          "no frequency reading", changed=False)
+            self._publish(miner_id, miner, current_freq, temp_c, reject_pct,
+                          "no frequency reading", changed=False, source=source)
             return
 
         # Resolve the per-miner ceiling/floor.
@@ -350,32 +368,46 @@ class GuardianController:
         floor = miner.get("guardian_freq_floor_mhz")
         floor = int(floor) if floor else int(gcfg.frequency_floor_mhz)
 
+        # Resolve the temperature thresholds. Defaults come from GuardianCfg per
+        # source; a per-miner ``guardian_max_temp_c`` overrides only the HIGH
+        # point, and the recovery (LOW) point is derived by subtracting the same
+        # hysteresis deadband the defaults carry — so the user sets one number.
+        default_high, default_low = gcfg.temp_band(source)
+        max_temp = miner.get("guardian_max_temp_c")
+        if max_temp:
+            temp_high = float(max_temp)
+            temp_low = temp_high - (default_high - default_low)
+        else:
+            temp_high, temp_low = default_high, default_low
+
         target, reason = decide_frequency(
             current_freq=int(current_freq),
             ceiling_mhz=ceiling,
             floor_mhz=floor,
-            vr_temp_c=vr_c,
+            temp_c=temp_c,
             hw_error_pct=reject_pct,
-            vr_high_c=gcfg.vr_high_c,
-            vr_low_c=gcfg.vr_low_c,
+            temp_high_c=temp_high,
+            temp_low_c=temp_low,
             hw_error_pct_max=gcfg.reject_pct_max,
-            step_down_vr_mhz=gcfg.step_down_vr_mhz,
+            step_down_temp_mhz=gcfg.step_down_vr_mhz,
             step_down_err_mhz=gcfg.step_down_err_mhz,
             step_up_mhz=gcfg.step_up_mhz,
+            source_label=source_label,
         )
 
         if target == int(current_freq):
             # Nothing to do — don't touch the miner (no NVS write).
-            self._publish(miner_id, miner, current_freq, vr_c, reject_pct,
-                          reason, changed=False, ceiling=ceiling, floor=floor)
+            self._publish(miner_id, miner, current_freq, temp_c, reject_pct,
+                          reason, changed=False, ceiling=ceiling, floor=floor,
+                          source=source)
             return
 
         # Optional cooldown: enforce extra settle time between changes.
         cooldown = int(gcfg.cooldown_seconds or 0)
         if cooldown > 0 and (now - state.last_change_ts) < cooldown:
-            self._publish(miner_id, miner, current_freq, vr_c, reject_pct,
+            self._publish(miner_id, miner, current_freq, temp_c, reject_pct,
                           f"cooldown ({reason})", changed=False,
-                          ceiling=ceiling, floor=floor)
+                          ceiling=ceiling, floor=floor, source=source)
             return
 
         # Apply the change (live — no restart on AxeOS).
@@ -387,23 +419,25 @@ class GuardianController:
         except Exception as exc:  # noqa: BLE001
             log.warning("guardian: miner=%s set_frequency failed: %s",
                         miner.get("name"), exc)
-            self._publish(miner_id, miner, current_freq, vr_c, reject_pct,
+            self._publish(miner_id, miner, current_freq, temp_c, reject_pct,
                           f"set_frequency failed: {exc}", changed=False,
-                          ceiling=ceiling, floor=floor)
+                          ceiling=ceiling, floor=floor, source=source)
             return
         if ok:
             state.last_commanded_freq = int(target)
             state.last_change_ts = now
             state.last_reason = reason
             log.info(
-                "guardian: miner=%s %d→%d MHz (%s) [VR=%s reject%%=%s ceiling=%d floor=%d]",
+                "guardian: miner=%s %d→%d MHz (%s) [%s=%s reject%%=%s ceiling=%d floor=%d]",
                 miner.get("name"), int(current_freq), int(target), reason,
-                f"{vr_c:.1f}" if vr_c is not None else "n/a",
+                source_label,
+                f"{temp_c:.1f}" if temp_c is not None else "n/a",
                 f"{reject_pct:.2f}" if reject_pct is not None else "n/a",
                 ceiling, floor,
             )
-            self._publish(miner_id, miner, target, vr_c, reject_pct, reason,
-                          changed=True, ceiling=ceiling, floor=floor)
+            self._publish(miner_id, miner, target, temp_c, reject_pct, reason,
+                          changed=True, ceiling=ceiling, floor=floor,
+                          source=source)
         else:
             log.warning("guardian: miner=%s rejected set_frequency(%d)",
                         miner.get("name"), int(target))
@@ -413,21 +447,31 @@ class GuardianController:
         miner_id: int,
         miner: dict,
         freq: int | None,
-        vr_c: float | None,
+        temp_c: float | None,
         reject_pct: float | None,
         reason: str,
         *,
         changed: bool,
         ceiling: int | None = None,
         floor: int | None = None,
+        source: str = "vr",
     ) -> None:
-        """Update the live status surfaced by the API/UI."""
+        """Update the live status surfaced by the API/UI.
+
+        ``temp_c`` is the governed sensor's reading and ``source`` says which
+        sensor it is ("vr" | "chip"), so the UI can label it correctly. The
+        legacy ``vr_temp_c`` key is kept (populated only in VR mode) so any
+        older consumer keeps working.
+        """
+        temp_r = round(temp_c, 1) if temp_c is not None else None
         self._status[miner_id] = {
             "miner_id": miner_id,
             "frequency_mhz": freq,
             "ceiling_mhz": ceiling,
             "floor_mhz": floor,
-            "vr_temp_c": round(vr_c, 1) if vr_c is not None else None,
+            "temp_c": temp_r,
+            "temp_source": source,
+            "vr_temp_c": temp_r if source == "vr" else None,
             "reject_pct": round(reject_pct, 3) if reject_pct is not None else None,
             "reason": reason,
             "changed": bool(changed),

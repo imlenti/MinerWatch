@@ -1,8 +1,9 @@
 # Guardian — governor di frequenza a runtime — Documento di design
 
 > Stato: **implementato (v1, solo frequenza)**. Backend in `backend/guardian.py`
-> + config in `backend/config.py` (`GuardianCfg`) + tre colonne per-miner in DB
-> (`guardian_enabled`, `guardian_max_freq_mhz`, `guardian_freq_floor_mhz`) +
+> + config in `backend/config.py` (`GuardianCfg`) + cinque colonne per-miner in
+> DB (`guardian_enabled`, `guardian_max_freq_mhz`, `guardian_freq_floor_mhz`,
+> `guardian_temp_source`, `guardian_max_temp_c`) +
 > endpoint in `backend/main.py`; UI nella tab **Advanced** del miner
 > (`frontend-react/.../GuardianPanel.tsx`). Tutto dietro il flag
 > `guardian.enabled` (globale) e l'opt-in per-miner. Famiglie target:
@@ -140,7 +141,24 @@ via `SELECT *`):
 - `guardian_enabled` (0/1) — opt-in per-miner;
 - `guardian_max_freq_mhz` — il tetto "max"; di default = frequenza corrente al
   momento dell'abilitazione, **editabile** dall'utente esperto;
-- `guardian_freq_floor_mhz` — override opzionale del floor (NULL = default).
+- `guardian_freq_floor_mhz` — override opzionale del floor (NULL = default);
+- `guardian_temp_source` — quale sensore governa la frequenza: `vr` (default) o
+  `chip`. NULL/sconosciuto = `vr` (comportamento legacy);
+- `guardian_max_temp_c` — la **temperatura massima** per-miner (la soglia alta).
+  Il punto di recupero (soglia bassa) è derivato a runtime come
+  `max − deadband`, dove il deadband è quello della sorgente attiva
+  (`high_default − low_default`). NULL = default globale della sorgente.
+
+**Sorgente temperatura e max-temp per-miner.** Le soglie restano nel
+`GuardianCfg` come **default per sorgente** (`vr_high_c/vr_low_c`,
+`chip_high_c/chip_low_c`), ma ora ogni miner può scegliere il sensore e
+impostare una sola soglia "max"; la legge di controllo è invariata e
+**source-agnostic** (`decide_frequency` riceve un valore e due soglie, più
+un'etichetta solo per il testo del motivo). Caveat della modalità **chip**: il
+chip è già governato dal PID ventola (~60 °C) e dal watchdog 75 °C, quindi un
+governor sul chip agisce solo a ventola satura; l'endpoint rifiuta un max chip
+≥ 75 °C perché non scavalchi mai il watchdog. Il VR resta default e consigliato
+(nessun altro loop lo governa).
 
 Scrittura via `db.set_guardian_config(...)` (pattern COALESCE come
 `set_fan_config`: aggiorna solo i campi passati).
@@ -148,16 +166,20 @@ Scrittura via `db.set_guardian_config(...)` (pattern COALESCE come
 Endpoint:
 
 - `GET /api/miners/{id}/guardian/status` → flag globale, supporto
-  (famiglia + capability), opt-in, max/floor, frequenza corrente, default
-  (soglie/passi/intervallo) e readout live;
+  (famiglia + capability), opt-in, max/floor, **sorgente + max-temp**, frequenza
+  corrente, default (soglie VR *e* chip, watchdog, passi/intervallo) e readout
+  live (che ora porta `temp_c` + `temp_source`);
 - `POST /api/miners/{id}/guardian/config` → `{enabled?, max_freq_mhz?,
-  freq_floor_mhz?}`. All'**abilitazione** senza `max`, il backend default il
-  tetto alla frequenza corrente (409 se non ancora nota dal primo poll).
+  freq_floor_mhz?, temp_source?, max_temp_c?}`. All'**abilitazione** senza `max`,
+  il backend default il tetto alla frequenza corrente (409 se non ancora nota
+  dal primo poll). `temp_source` validato a `vr`/`chip`; max chip ≥ 75 °C → 400.
 
-UI: tab **Advanced** del miner (`GuardianPanel.tsx`): toggle di abilitazione,
-campo **max frequency** (default = corrente, editabile), floor opzionale,
-riepilogo della policy, readout live e una nota di rischio. Tutto gated su
-`capabilities.set_frequency` e sul supporto famiglia.
+UI: tab **Advanced** del miner (`GuardianPanel.tsx`): toggle di abilitazione
+(con **dialog di conferma "a proprio rischio"** all'attivazione), campo **max
+frequency** (default = corrente, editabile), **sorgente temperatura** (VR/chip)
+e **max temperature** (con recupero derivato mostrato), floor opzionale,
+riepilogo della policy (adattato alla sorgente), readout live e una nota di
+rischio. Tutto gated su `capabilities.set_frequency` e sul supporto famiglia.
 
 ## 7. Sicurezza e reversibilità
 

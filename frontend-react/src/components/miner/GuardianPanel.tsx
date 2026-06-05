@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Activity, Gauge, ShieldAlert } from 'lucide-react';
+import { Activity, Cpu, Gauge, ShieldAlert, Zap } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -18,11 +26,13 @@ interface Props {
 /**
  * Advanced tab — the Guardian (runtime frequency governor).
  *
- * The Guardian is a slow, always-on loop that nudges ASIC frequency to keep
- * the VR temperature and HW error rate inside safe bounds, never above a
- * per-miner "max frequency" ceiling (default: the current frequency). It is
- * frequency-only in v1. This panel is the per-miner opt-in + the editable
- * ceiling/floor, plus a live readout of the loop's last decision.
+ * The Guardian is a slow, always-on loop that nudges ASIC frequency to keep a
+ * temperature signal — the VR by default, or the ASIC chip per-miner — and the
+ * HW error rate inside safe bounds, never above a per-miner "max frequency"
+ * ceiling (default: the current frequency). It is frequency-only in v1. This
+ * panel is the per-miner opt-in + the editable ceiling/floor, the temperature
+ * source and max-temperature knobs, and a live readout of the loop's last
+ * decision. Enabling it opens an at-your-own-risk confirmation first.
  */
 export function GuardianPanel({ data }: Props) {
   const { miner, capabilities } = data;
@@ -36,6 +46,11 @@ export function GuardianPanel({ data }: Props) {
   // to the live current frequency (what it would default to on first enable).
   const [maxFreq, setMaxFreq] = useState<number | ''>('');
   const [floor, setFloor] = useState<number | ''>('');
+  // Temperature source ('vr' | 'chip') and the per-miner max temperature.
+  const [source, setSource] = useState<'vr' | 'chip'>('vr');
+  const [maxTemp, setMaxTemp] = useState<number | ''>('');
+  // At-your-own-risk confirmation, gating the enable toggle.
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,7 +59,19 @@ export function GuardianPanel({ data }: Props) {
     if (!s) return;
     setMaxFreq(s.max_freq_mhz ?? s.current_freq_mhz ?? '');
     setFloor(s.freq_floor_mhz ?? '');
-  }, [s?.max_freq_mhz, s?.freq_floor_mhz, s?.current_freq_mhz]);
+    setSource(s.temp_source ?? 'vr');
+    const defHigh =
+      (s.temp_source ?? 'vr') === 'chip'
+        ? s.defaults.chip_high_c
+        : s.defaults.vr_high_c;
+    setMaxTemp(s.max_temp_c ?? defHigh ?? '');
+  }, [
+    s?.max_freq_mhz,
+    s?.freq_floor_mhz,
+    s?.current_freq_mhz,
+    s?.temp_source,
+    s?.max_temp_c,
+  ]);
 
   if (!capabilities.set_frequency) {
     return (
@@ -91,11 +118,28 @@ export function GuardianPanel({ data }: Props) {
   const d = s.defaults;
   const pending = setConfig.isPending;
 
-  async function run(payload: {
-    enabled?: boolean;
-    max_freq_mhz?: number;
-    freq_floor_mhz?: number;
-  }, ok: string) {
+  // Per-source default high threshold + hysteresis deadband, used to seed the
+  // field, show the placeholder/default, and derive the recovery point.
+  const defHighFor = (src: 'vr' | 'chip') =>
+    src === 'chip' ? d.chip_high_c : d.vr_high_c;
+  const deadbandFor = (src: 'vr' | 'chip') =>
+    src === 'chip' ? d.chip_high_c - d.chip_low_c : d.vr_high_c - d.vr_low_c;
+
+  const srcLabel = source === 'chip' ? 'Chip' : 'VR';
+  const highC = typeof maxTemp === 'number' ? maxTemp : defHighFor(source);
+  const lowC = Math.round((highC - deadbandFor(source)) * 10) / 10;
+  const liveTemp = s.live?.temp_c ?? s.live?.vr_temp_c ?? null;
+
+  async function run(
+    payload: {
+      enabled?: boolean;
+      max_freq_mhz?: number;
+      freq_floor_mhz?: number;
+      temp_source?: 'vr' | 'chip';
+      max_temp_c?: number;
+    },
+    ok: string,
+  ) {
     setFeedback(null);
     setError(null);
     try {
@@ -116,6 +160,30 @@ export function GuardianPanel({ data }: Props) {
     await run(payload, next ? 'Guardian enabled' : 'Guardian disabled');
   }
 
+  // The enable switch is gated by a confirmation: turning it ON opens the
+  // dialog; turning it OFF applies immediately (no friction to back out).
+  function onToggle(next: boolean) {
+    if (next) setConfirmOpen(true);
+    else void toggleEnabled(false);
+  }
+
+  async function confirmEnable() {
+    setConfirmOpen(false);
+    await toggleEnabled(true);
+  }
+
+  async function selectSource(next: 'vr' | 'chip') {
+    if (next === source) return;
+    setSource(next);
+    // If the user hasn't pinned a per-miner max, reflect the new source's
+    // default so the field and the derived recovery point stay sensible.
+    if (s?.max_temp_c == null) setMaxTemp(defHighFor(next));
+    await run(
+      { temp_source: next },
+      `Temperature source set to ${next === 'chip' ? 'ASIC chip' : 'VR'}`,
+    );
+  }
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -134,7 +202,7 @@ export function GuardianPanel({ data }: Props) {
         {/* What it does */}
         <p className="text-sm text-muted-foreground">
           A slow, always-on governor that adapts ASIC <strong>frequency</strong>{' '}
-          to the heat. It backs off when the VR runs hot or errors climb, and
+          to the heat. It backs off when temperature climbs or errors climb, and
           recovers frequency when things cool — never going above your max.
           Ideal for summer, when ambient swings within a single day.
         </p>
@@ -151,7 +219,7 @@ export function GuardianPanel({ data }: Props) {
           <Switch
             checked={enabled}
             disabled={pending}
-            onCheckedChange={toggleEnabled}
+            onCheckedChange={onToggle}
           />
         </div>
 
@@ -190,6 +258,86 @@ export function GuardianPanel({ data }: Props) {
             frequency
             {currentFreq != null ? ` (${currentFreq} MHz)` : ''}; raise it only
             if you know your hardware sustains it.
+          </p>
+        </div>
+
+        {/* Temperature source (VR vs ASIC chip) */}
+        <div className="space-y-2 border-t border-border pt-4">
+          <Label className="text-sm">Temperature source</Label>
+          <div className="inline-flex overflow-hidden rounded-md border border-border">
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => selectSource('chip')}
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-sm transition-colors disabled:opacity-60 ${
+                source === 'chip'
+                  ? 'bg-primary/15 font-medium text-primary'
+                  : 'text-muted-foreground hover:bg-muted/50'
+              }`}
+            >
+              <Cpu className="h-4 w-4" /> ASIC chip
+            </button>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => selectSource('vr')}
+              className={`flex items-center gap-1.5 border-l border-border px-4 py-1.5 text-sm transition-colors disabled:opacity-60 ${
+                source === 'vr'
+                  ? 'bg-primary/15 font-medium text-primary'
+                  : 'text-muted-foreground hover:bg-muted/50'
+              }`}
+            >
+              <Zap className="h-4 w-4" /> VR
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Which sensor drives frequency. <strong>VR</strong> (recommended):
+            no other loop governs it. <strong>Chip</strong>: already regulated
+            by the fan and the 75°C watchdog — it only acts once the fan is
+            saturated.
+          </p>
+        </div>
+
+        {/* Max temperature (per-miner high threshold; recovery derived) */}
+        <div className="space-y-2 border-t border-border pt-4">
+          <Label htmlFor="guardian-maxtemp" className="text-sm">
+            Max temperature (°C)
+          </Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="guardian-maxtemp"
+              type="number"
+              min={40}
+              max={110}
+              step={1}
+              value={maxTemp}
+              onChange={(e) =>
+                setMaxTemp(e.target.value === '' ? '' : Number(e.target.value))
+              }
+              disabled={pending}
+              className="max-w-[100px]"
+            />
+            <Button
+              variant="subtle"
+              disabled={pending || maxTemp === ''}
+              onClick={() =>
+                typeof maxTemp === 'number' &&
+                run({ max_temp_c: maxTemp }, `Max temperature set to ${maxTemp}°C`)
+              }
+            >
+              Save temp
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              recovers at ~{lowC}°C
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The {srcLabel} threshold above which it cuts frequency; recovery is
+            derived at max − {deadbandFor(source)}°C. Default for {srcLabel}:{' '}
+            {defHighFor(source)}°C.
+            {source === 'chip'
+              ? ' Keep it below the 75°C overheat watchdog.'
+              : ''}
           </p>
         </div>
 
@@ -234,10 +382,10 @@ export function GuardianPanel({ data }: Props) {
         <div className="space-y-1 border-t border-border pt-4 text-xs text-muted-foreground">
           <p className="font-semibold text-foreground">Policy</p>
           <p>
-            VR &gt; {d.vr_high_c}°C → −{d.step_down_vr_mhz} MHz · Rejected shares
-            &gt; {d.reject_pct_max}% → −{d.step_down_err_mhz} MHz · VR &lt;{' '}
-            {d.vr_low_c}°C → +{d.step_up_mhz} MHz (up to your max). Otherwise it
-            holds.
+            {srcLabel} &gt; {highC}°C → −{d.step_down_vr_mhz} MHz · Rejected
+            shares &gt; {d.reject_pct_max}% → −{d.step_down_err_mhz} MHz ·{' '}
+            {srcLabel} &lt; {lowC}°C → +{d.step_up_mhz} MHz (up to your max).
+            Otherwise it holds.
           </p>
         </div>
 
@@ -246,7 +394,7 @@ export function GuardianPanel({ data }: Props) {
           <p className="text-sm font-semibold">Live</p>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
             <Stat label="Frequency" value={fmt(s.live?.frequency_mhz ?? currentFreq, 'MHz')} />
-            <Stat label="VR temp" value={fmt(s.live?.vr_temp_c ?? null, '°C')} />
+            <Stat label={`${srcLabel} temp`} value={fmt(liveTemp, '°C')} />
             <Stat label="Reject" value={fmt(s.live?.reject_pct ?? null, '%')} />
             <Stat label="Ceiling" value={fmt(s.live?.ceiling_mhz ?? s.max_freq_mhz, 'MHz')} />
             <Stat label="Floor" value={fmt(s.live?.floor_mhz ?? s.freq_floor_mhz, 'MHz')} />
@@ -269,9 +417,10 @@ export function GuardianPanel({ data }: Props) {
           <span>
             The Guardian changes your miner's frequency automatically. It only
             ever lowers below — and recovers up to — your max, and the 75°C
-            overheat watchdog stays armed underneath it. Still, run it at your
-            own risk and keep an eye on the miner, especially right after
-            enabling.
+            overheat watchdog stays armed underneath it. In <strong>chip</strong>{' '}
+            mode it shares the sensor with the fan PID and that watchdog, so pick
+            the threshold with that in mind. Run it at your own risk and keep an
+            eye on the miner, especially right after enabling.
           </span>
         </div>
 
@@ -284,6 +433,47 @@ export function GuardianPanel({ data }: Props) {
           </p>
         )}
       </CardContent>
+
+      {/* At-your-own-risk confirmation, shown when enabling the Guardian. */}
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-amber-400" /> Enable Guardian?
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 pt-1 text-sm text-muted-foreground">
+                <p>
+                  The Guardian automatically changes your miner's ASIC frequency
+                  while it runs. This is an advanced feature that you enable{' '}
+                  <strong className="text-foreground">at your own risk</strong>.
+                </p>
+                <p>
+                  We strongly recommend staying near the miner and watching it
+                  closely,{' '}
+                  <strong className="text-foreground">
+                    especially the first time
+                  </strong>{' '}
+                  you turn it on. The 75°C overheat watchdog stays armed
+                  underneath, but you remain responsible for your hardware.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="subtle" onClick={() => setConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={pending}
+              onClick={confirmEnable}
+              className="gap-1.5"
+            >
+              <ShieldAlert className="h-4 w-4" /> I understand — enable
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
