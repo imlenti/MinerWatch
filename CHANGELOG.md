@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.2] — 2026-06-05
+
+### Fixed
+
+- **Live shares dropped early for high-throughput miners.** The "All miners
+  — live shares" chart evicted events with a per-miner *count* cap, so a
+  multi-ASIC board like the SupraHex — which logs ASIC results several times
+  faster than a single-ASIC Gamma — only retained ~5 minutes of history while
+  slower miners spanned the whole window, making the Hex dots vanish from the
+  left of the chart. Retention is now *time*-based (~15 min, covering the
+  longest selectable range) on both the frontend hooks and the backend ring
+  buffer, with a generous count cap kept only as a memory backstop.
+- **Donations had no effect when a miner was on its fallback pool.** Starting
+  a hashrate donation only rewrote the *primary* stratum slot, but a miner
+  that had failed over to its fallback keeps mining the fallback after the
+  restart (AxeOS persists `isUsingFallbackStratum`), so it never switched to
+  the donation pool. The donation now detects the active slot and repoints
+  whichever one the miner is actually mining on, leaving the other untouched;
+  the automatic revert restores the full prior pool config as before.
+
 ## [1.6.0] — 2026-05-24
 
 ### Added
