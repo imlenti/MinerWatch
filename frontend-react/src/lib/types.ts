@@ -432,6 +432,11 @@ export interface MetricsRangeResponse {
 export interface AuthStatus {
   enabled: boolean;
   authenticated?: boolean;
+  // Added in 1.10.x — all optional so an older backend (which only
+  // returns `enabled`) still type-checks and the UI degrades gracefully.
+  password_set?: boolean;
+  bind_is_loopback?: boolean;
+  needs_setup?: boolean;
 }
 
 export interface HealthResponse {

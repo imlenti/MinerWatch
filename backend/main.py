@@ -1489,7 +1489,23 @@ class LoginPayload(BaseModel):
 @app.get("/api/auth/status")
 async def api_auth_status() -> dict:
     cfg = get_config()
-    return {"enabled": cfg.auth.enabled}
+    password_set = bool((cfg.auth.password or "").strip())
+    host = (cfg.server.host or "").strip()
+    bind_is_loopback = host in {"127.0.0.1", "::1", "localhost", ""}
+    # ``needs_setup`` is a read-only hint for the UI's first-run security
+    # banner: the dashboard is reachable from the network (non-loopback
+    # bind) but the control endpoints are NOT protected (auth disabled, or
+    # enabled with no password). It changes no behaviour and gates nothing —
+    # actual enforcement is a separate, staged step. Returning extra keys is
+    # backward-compatible: older frontends just read ``enabled``.
+    protected = cfg.auth.enabled and password_set
+    needs_setup = (not protected) and (not bind_is_loopback)
+    return {
+        "enabled": cfg.auth.enabled,
+        "password_set": password_set,
+        "bind_is_loopback": bind_is_loopback,
+        "needs_setup": needs_setup,
+    }
 
 
 @app.post("/api/auth/login")
