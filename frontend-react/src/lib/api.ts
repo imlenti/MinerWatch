@@ -30,6 +30,22 @@ export interface ApiOptions {
   signal?: AbortSignal;
 }
 
+// When auth is enabled and a protected call comes back 401 (not signed in,
+// or the session expired), bounce the user to the login page instead of
+// leaving the UI stuck on silent failures. A module-level guard collapses a
+// burst of concurrent 401s (the dashboard fires several queries at once)
+// into a single redirect, and we never redirect away from /login itself so a
+// wrong-password attempt keeps showing its error inline.
+let redirectingToLogin = false;
+
+function redirectToLogin(): void {
+  if (redirectingToLogin) return;
+  if (window.location.pathname.startsWith('/login')) return;
+  redirectingToLogin = true;
+  const here = window.location.pathname + window.location.search;
+  window.location.href = `/login?next=${encodeURIComponent(here)}`;
+}
+
 export async function api<T = unknown>(
   path: string,
   opts: ApiOptions = {},
@@ -46,6 +62,11 @@ export async function api<T = unknown>(
   }
   const resp = await fetch(path, init);
   if (!resp.ok) {
+    if (resp.status === 401) {
+      // Auth is on and we're not signed in — send the user to /login,
+      // which returns here afterwards via the `next` param.
+      redirectToLogin();
+    }
     let detail = `${resp.status}`;
     try {
       const j = await resp.json();
