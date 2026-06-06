@@ -56,6 +56,9 @@ build/
 *.tar.gz
 *.zip
 
+# Vite esbuild temp files (leak into the tree on some macOS setups)
+frontend-react/vite.config.ts.timestamp-*.mjs
+
 # Logs
 *.log
 logs/

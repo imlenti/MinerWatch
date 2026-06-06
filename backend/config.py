@@ -331,6 +331,14 @@ def get_config() -> Config:
     global _config
     if _config is None:
         DATA_DIR.mkdir(exist_ok=True)
+        # The data dir holds secrets: the VAPID private key, and the auth
+        # password (stored in the settings DB). Restrict it to the owner so
+        # other local users can't read them. Best-effort — some mounts
+        # (read-only, SMB/CIFS) reject chmod, and we must not crash over it.
+        try:
+            DATA_DIR.chmod(0o700)
+        except OSError:
+            pass
         _config = Config.load()
     return _config
 

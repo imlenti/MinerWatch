@@ -99,6 +99,13 @@ def ensure_vapid_keys() -> dict[str, str]:
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(keys, indent=2), encoding="utf-8")
+    # Private key on disk — restrict to owner read/write. Best-effort: the
+    # parent data dir is already locked to 0700, this just hardens the file
+    # itself. Exotic mounts may reject chmod, so we don't crash over it.
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
     log.info("VAPID keys generated at %s", path)
     return keys
 
