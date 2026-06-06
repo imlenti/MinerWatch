@@ -1,0 +1,33 @@
+version: 2
+
+# Automated dependency-update PRs. Grouped weekly so the maintainer gets a
+# small, reviewable batch instead of a flood. Covers the Python backend, the
+# React frontend, the GitHub Actions we pin, and the Docker base image.
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: "npm"
+    directory: "/frontend-react"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      frontend-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
