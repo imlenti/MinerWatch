@@ -437,6 +437,9 @@ export interface AuthStatus {
   password_set?: boolean;
   bind_is_loopback?: boolean;
   needs_setup?: boolean;
+  // True once the operator has explicitly opted out of the auto-scan
+  // security warning. Lets the dashboard stop intercepting scans.
+  scan_ack?: boolean;
 }
 
 export interface HealthResponse {

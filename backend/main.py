@@ -1500,12 +1500,27 @@ async def api_auth_status() -> dict:
     # backward-compatible: older frontends just read ``enabled``.
     protected = cfg.auth.enabled and password_set
     needs_setup = (not protected) and (not bind_is_loopback)
+    # ``scan_ack`` records that the operator dismissed the just-in-time
+    # auto-scan warning by explicitly opting out. Stored under an underscore
+    # key so it stays out of the config-override system and the Settings UI.
+    scan_ack = (await db.get_setting("_scan_ack", "")) == "true"
     return {
         "enabled": cfg.auth.enabled,
         "password_set": password_set,
         "bind_is_loopback": bind_is_loopback,
         "needs_setup": needs_setup,
+        "scan_ack": scan_ack,
     }
+
+
+@app.post("/api/auth/ack_unprotected")
+async def api_auth_ack_unprotected() -> dict:
+    # The operator chose to run auto-scan while leaving the install
+    # unprotected. Persist that choice so the warning modal stops blocking
+    # future scans. ``needs_setup`` stays true, so the ambient banner keeps
+    # reminding them until they actually set a password.
+    await db.set_setting("_scan_ack", "true")
+    return {"ok": True}
 
 
 @app.post("/api/auth/login")

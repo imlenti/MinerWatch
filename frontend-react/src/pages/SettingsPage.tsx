@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,15 @@ export function SettingsPage() {
   const save = useSaveSettings();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Deep-link support: /settings?tab=security opens straight on that tab
+  // (used by the security banner / auto-scan warning). Falls back to
+  // General for a missing or unrecognised value.
+  const [searchParams] = useSearchParams();
+  const validTabs = ['general', 'alerts', 'notifications', 'mqtt', 'security'];
+  const tabParam = searchParams.get('tab');
+  const initialTab =
+    tabParam && validTabs.includes(tabParam) ? tabParam : 'general';
 
   async function handleSave() {
     if (!form) return;
@@ -82,7 +92,7 @@ export function SettingsPage() {
         </p>
       )}
 
-      <Tabs defaultValue="general" className="space-y-4">
+      <Tabs defaultValue={initialTab} className="space-y-4">
         <TabsList className="h-auto">
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>

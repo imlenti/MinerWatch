@@ -9,7 +9,14 @@ import { BestSharesCard } from '@/components/dashboard/BestSharesCard';
 import { FleetHashrateChart } from '@/components/dashboard/FleetHashrateChart';
 import { MinerGrid } from '@/components/dashboard/MinerGrid';
 import { AddMinerDialog } from '@/components/dashboard/AddMinerDialog';
-import { useMiners, useScanNetwork, useSettings } from '@/api/hooks';
+import {
+  useMiners,
+  useScanNetwork,
+  useSettings,
+  useAuthStatus,
+  useAckUnprotected,
+} from '@/api/hooks';
+import { SecurityScanDialog } from '@/components/dashboard/SecurityScanDialog';
 
 /**
  * Migrated dashboard.
@@ -31,10 +38,33 @@ import { useMiners, useScanNetwork, useSettings } from '@/api/hooks';
  */
 export function DashboardPage() {
   const [addOpen, setAddOpen] = useState(false);
+  const [scanWarnOpen, setScanWarnOpen] = useState(false);
 
   const { data: minersData, isLoading: minersLoading } = useMiners();
   const { data: settingsData } = useSettings();
+  const { data: authStatus } = useAuthStatus();
   const scanMutation = useScanNetwork();
+  const ackMutation = useAckUnprotected();
+
+  // Auto-scan exposes the fleet on the network. If the install is still
+  // unprotected (needs_setup) and the operator hasn't already opted out
+  // (scan_ack), intercept the first scan with a blocking warning instead of
+  // firing it immediately. Otherwise scan straight away.
+  const requestScan = () => {
+    if (authStatus?.needs_setup && !authStatus?.scan_ack) {
+      setScanWarnOpen(true);
+    } else {
+      scanMutation.mutate();
+    }
+  };
+
+  // "Scan anyway": record the opt-out (so we don't nag again) and run the
+  // scan. The ambient banner stays until they actually set a password.
+  const proceedScanUnprotected = () => {
+    ackMutation.mutate();
+    setScanWarnOpen(false);
+    scanMutation.mutate();
+  };
 
   const miners = minersData?.miners ?? [];
   const settings = settingsData?.current ?? null;
@@ -45,7 +75,7 @@ export function DashboardPage() {
       <Toolbar
         pollingSeconds={pollingSeconds}
         onAdd={() => setAddOpen(true)}
-        onScan={() => scanMutation.mutate()}
+        onScan={requestScan}
         scanning={scanMutation.isPending}
       />
 
@@ -62,11 +92,16 @@ export function DashboardPage() {
         miners={miners}
         loading={minersLoading}
         onAdd={() => setAddOpen(true)}
-        onScan={() => scanMutation.mutate()}
+        onScan={requestScan}
         scanning={scanMutation.isPending}
       />
 
       <AddMinerDialog open={addOpen} onOpenChange={setAddOpen} />
+      <SecurityScanDialog
+        open={scanWarnOpen}
+        onOpenChange={setScanWarnOpen}
+        onProceed={proceedScanUnprotected}
+      />
     </div>
   );
 }

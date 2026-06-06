@@ -158,6 +158,19 @@ export function useAuthStatus() {
   });
 }
 
+// Records that the operator opted out of the auto-scan security warning.
+// Invalidates auth-status afterwards so scan_ack flips to true in the UI
+// (auth-status has staleTime Infinity, so it won't refetch on its own).
+export function useAckUnprotected() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api('/api/auth/ack_unprotected', { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['auth-status'] });
+    },
+  });
+}
+
 export function useSettings() {
   return useQuery({
     queryKey: ['settings'],

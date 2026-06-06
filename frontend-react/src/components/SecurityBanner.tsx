@@ -37,7 +37,7 @@ export function SecurityBanner() {
           including changing frequency/voltage and pool payout. Set a password
           to lock down the controls.{' '}
           <Link
-            to="/settings"
+            to="/settings?tab=security"
             className="font-medium underline underline-offset-2 hover:text-amber-800 dark:hover:text-amber-200"
           >
             Set a password
