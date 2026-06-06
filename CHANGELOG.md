@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.4] — 2026-06-06
+
+### Added
+
+- **First-run security nudge.** When the dashboard is reachable on your network
+  but the controls are not protected by a password, a banner now warns that
+  anyone on the network can view *and control* your miners (change
+  frequency/voltage, redirect pool payout), with a one-click link straight to
+  the Security settings. It stays until you set a password.
+- **Just-in-time auto-scan warning.** The first time you run an auto-scan on an
+  unprotected install, a dialog explains the exposure and offers to set a
+  password. You can explicitly opt out ("I don't want to protect my miners");
+  the choice is remembered server-side so it does not ask again.
+- **Dependency vulnerability scanning in CI.** `pip-audit` and `npm audit` run
+  on every push and weekly as a non-blocking signal, and Dependabot opens weekly
+  update PRs across the Python, npm, GitHub Actions and Docker dependencies.
+
+### Fixed
+
+- **Enabling a password no longer leaves the UI stuck.** A protected request
+  that comes back 401 now redirects to the login page — and returns you where
+  you were after signing in — instead of failing silently. Previously, setting a
+  password could leave the dashboard unable to load until you manually went to
+  `/login`.
+- **Corrected a misleading comment** in `config.example.yaml`: the auth password
+  is not auto-generated. With auth enabled and no password set, the app fails
+  closed (every protected request returns 401) until you set one.
+
+### Security
+
+- **Tightened data-directory permissions.** The data directory is now locked to
+  the owner (`0700`) and the VAPID private key to `0600`, so other local users
+  on the same machine cannot read the stored secrets. Best-effort — filesystems
+  that reject `chmod` (read-only or network mounts) are tolerated without
+  crashing.
+
 ## [1.10.3] — 2026-06-05
 
 ### Added
