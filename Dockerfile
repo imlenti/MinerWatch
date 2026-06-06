@@ -20,7 +20,7 @@
 ###############################################################################
 # Stage 0 — frontend-builder (React/Vite via Node 20)
 ###############################################################################
-FROM node:20-slim AS frontend-builder
+FROM node:26-slim AS frontend-builder
 
 WORKDIR /build
 
