@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 
 from .base import MinerSample, PoolSnapshot, PoolConfig, parse_si_difficulty as _parse_si
-from .bitaxe import BitaxeDriver, _opt_float, _opt_int
+from .bitaxe import BitaxeDriver, _opt_float, _opt_int, _split_host_port
 
 
 def _strip_scheme(url: str | None) -> str | None:
@@ -36,29 +36,6 @@ def _strip_scheme(url: str | None) -> str | None:
     if "://" in url:
         url = url.split("://", 1)[1]
     return url or None
-
-
-def _split_stratum_url(full_url: str | None) -> tuple[str | None, int | None]:
-    """Parses a full stratum URL into a separate host and integer port.
-
-    Example: "stratum+tcp://solo.ckpool.org:3333" -> ("solo.ckpool.org", 3333)
-    """
-    if not full_url:
-        return None, None
-
-    url = full_url.strip()
-    if "://" in url:
-        _, url = url.split("://", 1)
-
-    if ":" in url:
-        host, _, port_str = url.partition(":")
-        try:
-            port = int(port_str)
-        except ValueError:
-            port = None
-        return host, port
-
-    return url, None
 
 
 def _make_full_url(url: str | None, port: int | None) -> str | None:
@@ -213,8 +190,9 @@ class NmaxeDriver(BitaxeDriver):
 
     # ---- Control API ----
 
-    async def _patch_preference(self, payload: dict[str, Any]) -> bool:
-        url = f"{self._base_url()}/api/setting/preference"
+    async def _patch(self, path: str, payload: dict[str, Any]) -> bool:
+        """Send a PATCH request to the specified API endpoint path."""
+        url = f"{self._base_url()}{path}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as cli:
                 resp = await cli.patch(url, json=payload)
@@ -222,6 +200,10 @@ class NmaxeDriver(BitaxeDriver):
         except httpx.HTTPError:
             return False
         return True
+
+    async def _patch_preference(self, payload: dict[str, Any]) -> bool:
+        """Send a PATCH to preference endpoint (kept for compatibility & tests)."""
+        return await self._patch("/api/setting/preference", payload)
 
     async def set_fan_speed(self, percent: int) -> bool:
         """Manual fan duty via ``PATCH /api/setting/preference``.
@@ -242,51 +224,23 @@ class NmaxeDriver(BitaxeDriver):
         )
 
     async def set_frequency(self, mhz: int) -> bool:
-        url = f"{self._base_url()}/api/setting/mining"
-        payload = {"asicFreqReq": int(mhz)}
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as cli:
-                resp = await cli.patch(url, json=payload)
-                resp.raise_for_status()
-        except httpx.HTTPError:
-            return False
-        return True
+        """Set ASIC target frequency in MHz via ``PATCH /api/setting/mining``."""
+        return await self._patch("/api/setting/mining", {"asicFreqReq": int(mhz)})
 
     async def set_voltage(self, millivolts: int) -> bool:
-        url = f"{self._base_url()}/api/setting/mining"
-        payload = {"asicVcoreReq": int(millivolts)}
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as cli:
-                resp = await cli.patch(url, json=payload)
-                resp.raise_for_status()
-        except httpx.HTTPError:
-            return False
-        return True
+        """Set ASIC core voltage in mV via ``PATCH /api/setting/mining``."""
+        return await self._patch("/api/setting/mining", {"asicVcoreReq": int(millivolts)})
 
     async def pause(self) -> bool:
-        """Stop hashing via NMAxe ``PATCH /api/mining/state`` with paused=true."""
-        url = f"{self._base_url()}/api/mining/state"
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as cli:
-                resp = await cli.patch(url, json={"paused": True})
-                resp.raise_for_status()
-        except httpx.HTTPError:
-            return False
-        return True
+        """Stop hashing via NMAxe ``PATCH /api/mining/state`` with ``paused:true``."""
+        return await self._patch("/api/mining/state", {"paused": True})
 
     async def resume(self) -> bool:
-        """Resume hashing via NMAxe ``PATCH /api/mining/state`` with paused=false."""
-        url = f"{self._base_url()}/api/mining/state"
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as cli:
-                resp = await cli.patch(url, json={"paused": False})
-                resp.raise_for_status()
-        except httpx.HTTPError:
-            return False
-        return True
+        """Resume hashing via NMAxe ``PATCH /api/mining/state`` with ``paused:false``."""
+        return await self._patch("/api/mining/state", {"paused": False})
 
     async def read_pool_config(self) -> PoolConfig:
-        """Reads primary & fallback stratum config from /api/setting/mining."""
+        """Read primary and fallback stratum config from ``/api/setting/mining``."""
         url = f"{self._base_url()}/api/setting/mining"
         async with httpx.AsyncClient(timeout=self.timeout) as cli:
             resp = await cli.get(url)
@@ -297,9 +251,9 @@ class NmaxeDriver(BitaxeDriver):
         primary = stratum.get("primary") or {}
         fallback = stratum.get("fallback") or {}
 
-        # Parse URLs (splitting scheme/host and port)
-        p_host, p_port = _split_stratum_url(primary.get("url"))
-        fb_host, fb_port = _split_stratum_url(fallback.get("url"))
+        # Parse URLs using shared Bitaxe host/port splitter
+        p_host, p_port = _split_host_port(primary.get("url"), None)
+        fb_host, fb_port = _split_host_port(fallback.get("url"), None)
 
         return PoolConfig(
             url=p_host,
@@ -313,7 +267,7 @@ class NmaxeDriver(BitaxeDriver):
         )
 
     async def set_pool(self, config: PoolConfig) -> bool:
-        """Sets primary and (if present) fallback stratum configs, then restarts."""
+        """Set primary and fallback stratum configs, then reboot to apply."""
         primary_url = _make_full_url(config.url, config.port)
         fallback_url = _make_full_url(config.fb_url, config.fb_port)
 
@@ -335,12 +289,7 @@ class NmaxeDriver(BitaxeDriver):
                 "pwd": config.fb_password or "x",
             }
 
-        url = f"{self._base_url()}/api/setting/mining"
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as cli:
-                resp = await cli.patch(url, json=payload)
-                resp.raise_for_status()
-        except httpx.HTTPError:
+        if not await self._patch("/api/setting/mining", payload):
             return False
 
         # Apply requires a reboot
