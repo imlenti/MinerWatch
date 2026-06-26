@@ -883,10 +883,10 @@ class GuardianController:
         ``temp_c`` is the governed sensor's reading and ``source`` says which
         sensor it is ("vr" | "chip"), so the UI can label it correctly. The
         legacy ``vr_temp_c`` key is kept (populated only in VR mode) so any
-        older consumer keeps working. ``hashrate_ths`` / ``asic_errors`` are the
-        effective-hashrate and ASIC hardware-error readings the regression brake
-        watches; ``soft_ceiling`` is the in-memory cap pinned after a regression
-        (``ceiling`` already reflects it — this is for an explicit UI hint).
+        older consumer keeps working. ``hashrate_ths`` / ``error_pct`` / ``asic_errors`` are
+        the effective-hashrate, ASIC hardware-error percentage, and ASIC hardware-error
+        readings the regression brake watches; ``soft_ceiling`` is the in-memory cap pinned
+        after a regression (``ceiling`` already reflects it — this is for an explicit UI hint).
         """
         temp_r = round(temp_c, 1) if temp_c is not None else None
         self._status[miner_id] = {

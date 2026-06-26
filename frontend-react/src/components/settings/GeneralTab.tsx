@@ -69,8 +69,8 @@ export function GeneralTab({ form, setForm }: Props) {
             </div>
             <div>
               <span className="font-semibold text-foreground">Guardian averaging window</span>: The time window used by the
-              Guardian governor to average hashrate, temperature, and power metrics. This prevents false-positive
-              throttling from transient dips/peaks. Set to 0 to use instantaneous values.
+              Guardian governor to average hashrate, temperature, power, and hardware error percentage metrics. This
+              prevents false-positive throttling from transient dips/peaks. Set to 0 to use instantaneous values.
             </div>
           </div>
         </CardContent>

@@ -158,8 +158,9 @@ class GuardianCfg:
     interval_seconds: int = 300
 
     # Time window (in seconds) used by the governor to average hashrate,
-    # temperature, and power metrics, preventing false-positive throttling
-    # from transient dips/peaks. Set to 0 to disable and use instantaneous values.
+    # temperature, power, and hardware error percentage metrics, preventing
+    # false-positive throttling from transient dips/peaks. Set to 0 to disable
+    # and use instantaneous values.
     hashrate_average_window_seconds: int = 30
 
     # ---- Control thresholds (the friend's field-tested values). ----
