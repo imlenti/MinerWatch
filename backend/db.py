@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS metrics (
     best_difficulty REAL,
     pool_url        TEXT,
     worker          TEXT,
+    error_pct       REAL,
     raw             TEXT,                 -- original payload as JSON
     FOREIGN KEY (miner_id) REFERENCES miners(id) ON DELETE CASCADE
 );
@@ -461,6 +462,8 @@ def _init_db_sync() -> None:
             "ALTER TABLE miners ADD COLUMN ambient_sensor_name TEXT",
             # Per-trophy dashboard visibility (see block_finds DDL).
             "ALTER TABLE block_finds ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+            # Hardware error percentage column in metrics table.
+            "ALTER TABLE metrics ADD COLUMN error_pct REAL",
         ]:
             try:
                 conn.execute(column_def)
@@ -693,8 +696,8 @@ async def insert_metric(miner_id: int, ts: int, sample: dict[str, Any]) -> None:
             INSERT INTO metrics
               (miner_id, ts, hashrate_ths, power_w, temp_chip_c, temp_vr_c,
                fan_rpm, fan_pct, frequency_mhz, voltage_mv, uptime_s,
-               accepted, rejected, best_difficulty, pool_url, worker)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               accepted, rejected, best_difficulty, pool_url, worker, error_pct)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 miner_id,
@@ -713,6 +716,7 @@ async def insert_metric(miner_id: int, ts: int, sample: dict[str, Any]) -> None:
                 sample.get("best_difficulty"),
                 sample.get("pool_url"),
                 sample.get("worker"),
+                sample.get("error_pct"),
             ),
         )
         if raw is not None:
@@ -753,10 +757,10 @@ async def get_latest_raw(miner_id: int) -> dict[str, Any] | None:
 
 
 async def get_recent_metrics_average(miner_id: int, window_seconds: int) -> dict[str, float | None]:
-    """Calculate the average hashrate, power, chip temp, and VR temp over the last N seconds."""
+    """Calculate the average hashrate, power, chip temp, VR temp, and error rate over the last N seconds."""
     cutoff = int(time.time()) - window_seconds
     sql = (
-        "SELECT AVG(hashrate_ths), AVG(power_w), AVG(temp_chip_c), AVG(temp_vr_c) "
+        "SELECT AVG(hashrate_ths), AVG(power_w), AVG(temp_chip_c), AVG(temp_vr_c), AVG(error_pct) "
         "FROM metrics WHERE miner_id = ? AND ts >= ?"
     )
     async with connect() as conn:
@@ -768,6 +772,7 @@ async def get_recent_metrics_average(miner_id: int, window_seconds: int) -> dict
             "power_w": row[1],
             "temp_chip_c": row[2],
             "temp_vr_c": row[3],
+            "error_pct": row[4],
         }
     return {}
 

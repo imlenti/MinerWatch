@@ -551,6 +551,10 @@ class GuardianController:
         if power_w is None:
             power_w = sample.power_w
 
+        error_pct = avg_metrics.get("error_pct")
+        if error_pct is None:
+            error_pct = sample.error_pct
+
         temp_c = temp_chip_c if source == "chip" else temp_vr_c
 
         # Effective hashrate (TH/s) and the ASIC hardware-error counter — the
@@ -645,8 +649,8 @@ class GuardianController:
         )
         valid_hr = bool(can_validate and hashrate_ths >= expected_ths * float(gcfg.valid_pct))
         error_high = (
-            sample.error_pct is not None
-            and float(sample.error_pct) > float(gcfg.error_pct_max)
+            error_pct is not None
+            and float(error_pct) > float(gcfg.error_pct_max)
         )
         # Either signal means "unstable": back off (frequency-only) or cure with
         # voltage (co-tuner). The ASIC error % climbs when pushing frequency at
@@ -658,7 +662,7 @@ class GuardianController:
         )
         tele["expected_ths"] = round(expected_ths, 2) if expected_ths is not None else None
         tele["valid"] = valid_hr if can_validate else None
-        tele["error_pct"] = round(sample.error_pct, 2) if sample.error_pct is not None else None
+        tele["error_pct"] = round(error_pct, 2) if error_pct is not None else None
 
         # ---- Phase 2: voltage co-tuner path (per-miner opt-in) ----
         # When the voltage lever is enabled (global master + per-miner opt-in)

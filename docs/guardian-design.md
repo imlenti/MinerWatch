@@ -148,7 +148,7 @@ un numero limitato e sotto controllo.
 
 ### 3.2 Media mobile delle metriche (windowed metrics averaging)
 
-Per prevenire falsi positivi causati da oscillazioni temporanee o transitorie delle metriche (es. picchi improvvisi di temperatura o cali temporanei dell'hashrate), il Guardian non lavora sulle metriche istantanee dell'ultimo poll, ma calcola una media dei valori registrati nel database in una finestra temporale (di default 30 secondi).
+Per prevenire falsi positivi causati da oscillazioni temporanee o transitorie delle metriche (es. picchi improvvisi di temperatura, di errore hardware o cali temporanei dell'hashrate), il Guardian non lavora sulle metriche istantanee dell'ultimo poll, ma calcola una media dei valori registrati nel database in una finestra temporale (di default 30 secondi) per hashrate, temperatura, potenza e percentuale di errore hardware (error_pct).
 
 La finestra temporale è configurabile globalmente tramite la chiave `guardian.hashrate_average_window_seconds` nelle impostazioni generali. Impostando il valore a `0`, la funzionalità viene disattivata e il governor torna ad utilizzare i valori istantanei.
 

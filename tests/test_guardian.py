@@ -436,6 +436,7 @@ def test_govern_one_uses_recent_averages():
         "power_w": 20.0,
         "temp_chip_c": 60.0,
         "temp_vr_c": 68.0,
+        "error_pct": 1.2,
     }
 
     async def run():
@@ -458,6 +459,8 @@ def test_govern_one_uses_recent_averages():
             mock_decide.assert_called_once()
             kwargs = mock_decide.call_args.kwargs
             assert kwargs["hashrate_invalid"] is True
+            mock_publish.assert_called_once()
+            assert mock_publish.call_args.kwargs["error_pct"] == 1.2
 
     asyncio.run(run())
 
