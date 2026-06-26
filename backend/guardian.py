@@ -558,8 +558,12 @@ class GuardianController:
         temp_c = temp_chip_c if source == "chip" else temp_vr_c
 
         # Effective hashrate (TH/s) and the ASIC hardware-error percentage (error_pct)
-        # — the signals behind the regression brake. ``hw_errors`` is the cumulative
-        # ASIC invalid-nonce count, which is tracked as a delta for telemetry.
+        # — the signals behind the regression brake.
+        #
+        # ``hashrate_ths`` is AxeOS's reported (real) hashrate.
+        # ``hw_errors`` is the cumulative summed per-ASIC invalid-nonce count, which climbs
+        # when an overclock starts producing garbage (cratering real hashrate while the
+        # pool-reject % stays blind). We track ``hw_errors`` as a delta for telemetry.
         hw_errors = sample.hw_errors
         err_delta = None
         if (
