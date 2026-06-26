@@ -523,8 +523,35 @@ class GuardianController:
         # behaviour. In chip mode the chip is also driven by the fan PID and the
         # 75°C watchdog, so the governor only bites once the fan is saturated.
         source = "chip" if str(miner.get("guardian_temp_source") or "").lower() == "chip" else "vr"
-        temp_c = sample.temp_chip_c if source == "chip" else sample.temp_vr_c
         source_label = "Chip" if source == "chip" else "VR"
+
+        # Fetch recent averages over the configured window to avoid transient dips/spikes
+        window = int(getattr(gcfg, "hashrate_average_window_seconds", 30))
+        avg_metrics = {}
+        if window > 0:
+            try:
+                avg_metrics = await db.get_recent_metrics_average(miner_id, window)
+            except Exception:
+                log.exception("guardian: failed to fetch recent averages for miner=%s", miner.get("name"))
+
+        # Fallback to instantaneous values if not found or window is 0
+        hashrate_ths = avg_metrics.get("hashrate_ths")
+        if hashrate_ths is None:
+            hashrate_ths = sample.hashrate_ths
+
+        temp_chip_c = avg_metrics.get("temp_chip_c")
+        if temp_chip_c is None:
+            temp_chip_c = sample.temp_chip_c
+
+        temp_vr_c = avg_metrics.get("temp_vr_c")
+        if temp_vr_c is None:
+            temp_vr_c = sample.temp_vr_c
+
+        power_w = avg_metrics.get("power_w")
+        if power_w is None:
+            power_w = sample.power_w
+
+        temp_c = temp_chip_c if source == "chip" else temp_vr_c
 
         # Effective hashrate (TH/s) and the ASIC hardware-error counter — the
         # signals behind the regression brake. ``hashrate_ths`` is AxeOS's
@@ -532,7 +559,6 @@ class GuardianController:
         # nonce count, which climbs when an overclock starts producing garbage
         # (those bad nonces crater real hashrate but never reach the pool, so the
         # reject-% term stays blind to them).
-        hashrate_ths = sample.hashrate_ths
         hw_errors = sample.hw_errors
         err_delta = None
         if (
@@ -676,11 +702,11 @@ class GuardianController:
                     hashrate_invalid=hashrate_invalid,
                     valid=allow_up,
                     instability_label=instab_label,
-                    chip_c=sample.temp_chip_c,
+                    chip_c=temp_chip_c,
                     chip_cutoff_c=float(gcfg.chip_cutoff_c),
-                    vr_c=sample.temp_vr_c,
+                    vr_c=temp_vr_c,
                     vr_cutoff_c=float(gcfg.vr_cutoff_c),
-                    power_w=sample.power_w,
+                    power_w=power_w,
                     power_cutoff_w=power_cut,
                     vin_mv=sample.input_voltage_mv,
                     vin_min_mv=vin_lo,

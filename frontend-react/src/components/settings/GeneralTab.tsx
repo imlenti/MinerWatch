@@ -53,11 +53,26 @@ export function GeneralTab({ form, setForm }: Props) {
             max={3650}
             onChange={(v) => setForm({ ...form, retentionDays: v })}
           />
-          <p className="text-xs text-muted-foreground sm:col-span-2">
-            <span className="font-semibold text-foreground">Hashrate smoothing</span>: tau (time constant) of the
-            server-side EMA. 60s is a good trade-off between responsiveness and stability. Set to 0 to see raw
-            firmware values.
-          </p>
+          <Field
+            id="guardian.hashrate_average_window_seconds"
+            label="Guardian averaging window (seconds, 0 = off)"
+            value={form.guardianHashrateAverageWindow}
+            min={0}
+            max={600}
+            onChange={(v) => setForm({ ...form, guardianHashrateAverageWindow: v })}
+          />
+          <div className="text-xs text-muted-foreground sm:col-span-2 space-y-1.5">
+            <div>
+              <span className="font-semibold text-foreground">Hashrate smoothing</span>: tau (time constant) of the
+              server-side EMA. 60s is a good trade-off between responsiveness and stability. Set to 0 to see raw
+              firmware values.
+            </div>
+            <div>
+              <span className="font-semibold text-foreground">Guardian averaging window</span>: The time window used by the
+              Guardian governor to average hashrate, temperature, and power metrics. This prevents false-positive
+              throttling from transient dips/peaks. Set to 0 to use instantaneous values.
+            </div>
+          </div>
         </CardContent>
       </Card>
 

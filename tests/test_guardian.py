@@ -13,6 +13,7 @@ from __future__ import annotations
 import pathlib
 import sys
 import types
+import pytest
 
 # Make the repo root importable whether invoked via pytest or directly.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -389,6 +390,76 @@ def test_pt_above_ceiling_caps():
     f, v, r = decide_pt(current_freq=720, hashrate_invalid=False, valid=True)
     assert f == 700
     assert "cap" in r
+
+
+def test_govern_one_uses_recent_averages():
+    import asyncio
+    from unittest.mock import AsyncMock, Mock, patch
+    from backend.miners.base import MinerSample
+    from backend.guardian import guardian, _GuardianState
+
+    miner = {"id": 1, "name": "miner1", "family": "bitaxe", "guardian_temp_source": "vr"}
+    sample = MinerSample(
+        family="bitaxe",
+        host="10.0.0.1",
+        online=True,
+        frequency_mhz=550,
+        temp_chip_c=60.0,
+        temp_vr_c=68.0,
+        hashrate_ths=2.5,
+        power_w=20.0,
+        accepted=100,
+        rejected=0,
+    )
+
+    gcfg = Mock()
+    gcfg.hashrate_average_window_seconds = 30
+    gcfg.reject_min_shares = 10
+    gcfg.reject_pct_max = 5.0
+    gcfg.frequency_floor_mhz = 400
+    gcfg.step_down_vr_mhz = 20
+    gcfg.step_down_err_mhz = 10
+    gcfg.step_up_mhz = 10
+    gcfg.temp_band = Mock(return_value=(70.0, 67.0))
+    gcfg.hashrate_settle_seconds = 0
+    gcfg.valid_pct = 0.97
+    gcfg.error_pct_max = 5.0
+    gcfg.v2_voltage_enabled = False
+    gcfg.cooldown_seconds = 0
+
+    cfg = Mock()
+
+    sample.expected_hashrate_ths = 2.0
+
+    avg_metrics = {
+        "hashrate_ths": 1.5,
+        "power_w": 20.0,
+        "temp_chip_c": 60.0,
+        "temp_vr_c": 68.0,
+    }
+
+    async def run():
+        mock_drv = AsyncMock()
+        mock_drv.set_frequency.return_value = True
+        with patch("backend.db.get_recent_metrics_average", AsyncMock(return_value=avg_metrics)) as mock_avg, \
+             patch("backend.guardian.driver_for_record", Mock(return_value=mock_drv)) as mock_dfr, \
+             patch.object(guardian, "_publish") as mock_publish, \
+             patch("backend.guardian.decide_frequency") as mock_decide:
+
+            mock_decide.return_value = (530, "hashrate below theoretical")
+
+            state = _GuardianState()
+            state.last_commanded_freq = 550
+            guardian._states[1] = state
+
+            await guardian._govern_one(miner, sample, gcfg, cfg)
+
+            mock_avg.assert_called_once_with(1, 30)
+            mock_decide.assert_called_once()
+            kwargs = mock_decide.call_args.kwargs
+            assert kwargs["hashrate_invalid"] is True
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

@@ -752,6 +752,27 @@ async def get_latest_raw(miner_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def get_recent_metrics_average(miner_id: int, window_seconds: int) -> dict[str, float | None]:
+    """Calculate the average hashrate, power, chip temp, and VR temp over the last N seconds."""
+    cutoff = int(time.time()) - window_seconds
+    sql = (
+        "SELECT AVG(hashrate_ths), AVG(power_w), AVG(temp_chip_c), AVG(temp_vr_c) "
+        "FROM metrics WHERE miner_id = ? AND ts >= ?"
+    )
+    async with connect() as conn:
+        async with conn.execute(sql, (miner_id, cutoff)) as cur:
+            row = await cur.fetchone()
+    if row:
+        return {
+            "hashrate_ths": row[0],
+            "power_w": row[1],
+            "temp_chip_c": row[2],
+            "temp_vr_c": row[3],
+        }
+    return {}
+
+
+
 # ---------- Ambient (room) temperature time-series ----------
 
 async def insert_ambient_metric(sensor_id: str, ts: int, temp_c: float) -> None:

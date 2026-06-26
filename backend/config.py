@@ -157,6 +157,11 @@ class GuardianCfg:
     # after a live frequency change before the next decision is taken.
     interval_seconds: int = 300
 
+    # Time window (in seconds) used by the governor to average hashrate,
+    # temperature, and power metrics, preventing false-positive throttling
+    # from transient dips/peaks. Set to 0 to disable and use instantaneous values.
+    hashrate_average_window_seconds: int = 30
+
     # ---- Control thresholds (the friend's field-tested values). ----
     # VR temperature is the primary lever: nothing else in MinerWatch
     # governs it in a closed loop (the fan PID watches the chip, the
