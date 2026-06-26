@@ -167,6 +167,22 @@ async def _identify_bitaxe(host: str) -> dict | None:
         return None
 
     raw = sample.raw or {}
+
+    # Check if this is an NMAxe device (uses nested identity and miner telemetry blocks)
+    if "identity" in raw and isinstance(raw["identity"], dict):
+        nmaxe_drv = NMAxeDriver(host=host, timeout=2)
+        nmaxe_sample = await nmaxe_drv.poll()
+        if nmaxe_sample.online:
+            model = nmaxe_sample.model or "NMAxe"
+            return {
+                "family": "nmaxe",
+                "host": host,
+                "port": PORT_BITAXE,
+                "mac": nmaxe_sample.mac,
+                "model": model,
+                "name": nmaxe_sample.hostname or model or f"NMAxe {host}",
+            }
+
     # Static ASIC/board identity (deviceModel, asicCount, …). Best-effort:
     # empty dict on older firmware that doesn't expose the endpoint.
     asic = await drv.fetch_asic_info()

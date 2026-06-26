@@ -1,29 +1,23 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Driver for the NMAxe family (NMAxe / NMAxeGamma / NMQAxe++).
+"""Driver for the NMAxe series of home miners (NMAxe, NMAxeGamma, and NMQAxe++).
 
-NMAxe is an ESP32-S3 solo miner forked from ``bitaxeorg/ESP-Miner``, but
-its REST surface was restructured, so it is a real sibling driver rather
-than a thin :class:`BitaxeDriver` subclass — only ``restart()`` and the
-HTTP plumbing are reused:
+These devices run the open-source ESP-Miner-NMAxe firmware by NMminer1024,
+which is a fork of ESP-Miner/AxeOS. The hardware features one or multiple
+ASIC chips from the Bitmain BM1366 / BM1370 family:
 
-  * ``GET /api/system/info`` returns a *nested* object
-    (``power`` / ``temps`` / ``asic`` / ``miner`` / ``identity`` /
-    ``stratum`` / ``fans[]``), NOT the flat AxeOS keys the Bitaxe parser
-    expects.
-  * control moved under ``/api/setting/*`` (fan via
-    ``PATCH /api/setting/preference``).
-  * there is no MAC anywhere, no ``/api/system/asic``, and no
-    pause/shutdown endpoint.
+  - **NMAxe**: 1x BM1366 ASIC, typical hashrate ~450-550 GH/s, single fan.
+  - **NMAxeGamma**: 1x BM1370 ASIC, typical hashrate ~1.2-2.0 TH/s, single fan.
+  - **NMQAxe++**: 4x BM1370 ASICs, typical hashrate ~4.8-7.3 TH/s, dual fans (case + vcore), 2.8" TFT.
 
-Schema verified against a real NMAxe (BM1366, fw v3.0.21) — see
-``NOTES.md`` for the captured payloads. Official firmware + API docs:
-https://github.com/NMminer1024/ESP-Miner-NMAxe (``docs/API.md``).
+API REST/JSON Endpoints on port 80:
+  - ``GET  /api/system/info``         live telemetry (power, temps, hashrate, fans, stratum used)
+  - ``POST /api/system/restart``      graceful soft reboot
+  - ``GET  /api/setting/mining``      current target frequency, voltage and primary/fallback pool settings
+  - ``PATCH /api/setting/mining``     sets target frequency, core voltage, and primary/fallback pools
+  - ``GET  /api/setting/preference``  screen, backlight, led, and detailed fan auto/manual settings
+  - ``PATCH /api/setting/preference`` sets fans speed, target temps, auto flags, and screen options
 
-Capabilities are deliberately narrow (see ``NOTES.md``): fan control
-(auto + manual duty) and restart only. Frequency/voltage, the Guardian
-co-tuner, pause/shutdown and pool-repoint (donate) are all off — the
-co-tuner excludes itself because it requires both
-``can_set_voltage`` and ``can_set_frequency``.
+Reference documentation: https://github.com/NMminer1024/ESP-Miner-NMAxe
 """
 from __future__ import annotations
 
@@ -31,8 +25,8 @@ from typing import Any
 
 import httpx
 
-from .base import MinerSample, PoolSnapshot, parse_si_difficulty as _parse_si
-from .bitaxe import BitaxeDriver, _opt_float, _opt_int
+from .base import MinerSample, PoolSnapshot, PoolConfig, parse_si_difficulty as _parse_si
+from .bitaxe import BitaxeDriver, _opt_float, _opt_int, _split_host_port
 
 
 def _strip_scheme(url: str | None) -> str | None:
@@ -44,28 +38,47 @@ def _strip_scheme(url: str | None) -> str | None:
     return url or None
 
 
+def _make_full_url(url: str | None, port: int | None) -> str | None:
+    """Combines host and port back into a full stratum URL with the correct scheme."""
+    if not url:
+        return None
+
+    full_url = url.strip()
+
+    # Strip any existing scheme from host first to prevent double prefixing
+    if "://" in full_url:
+        scheme, remainder = full_url.split("://", 1)
+        scheme_prefix = f"{scheme}://"
+        full_url = remainder
+    else:
+        scheme_prefix = "stratum+tcp://"
+
+    # Append port if not already part of the URL string
+    if ":" not in full_url and port is not None:
+        full_url = f"{full_url}:{port}"
+
+    return f"{scheme_prefix}{full_url}"
+
+
 class NmaxeDriver(BitaxeDriver):
     """NMAxe / NMAxeGamma / NMQAxe++ — nested AxeOS-fork REST surface.
 
     ``poll()`` is inherited from :class:`BitaxeDriver` (same
-    ``GET /api/system/info`` URL); only ``_parse`` and the fan controls
-    are overridden. The inherited frequency/voltage/pool/pause methods are
-    never reached because the matching capability flags are False and
-    ``main.py`` gates every control endpoint on them.
+    ``GET /api/system/info`` URL); only ``_parse`` and the control methods
+    are overridden.
     """
 
     family = "nmaxe"
     DEFAULT_PORT = 80
 
-    # Fan control (auto + manual) and restart only — see module docstring.
     can_set_fan = True
-    can_set_frequency = False
-    can_set_voltage = False
+    can_set_frequency = True
+    can_set_voltage = True
     can_set_workmode = False
     can_restart = True
-    can_pause = False
+    can_pause = True
     can_shutdown = False
-    can_set_pool = False
+    can_set_pool = True
 
     async def fetch_probe(self) -> dict[str, Any]:
         """GET ``/probe`` — lightweight identity (model/hostname/version).
@@ -112,8 +125,7 @@ class NmaxeDriver(BitaxeDriver):
         worker = stratum.get("user") or None
 
         # `miner.paused` is a real bool on NMAxe → drives the Standby badge
-        # and lets alerts skip a deliberately-stopped miner. (There is no
-        # pause *command*, only this read — see capability flags.)
+        # and lets alerts skip a deliberately-stopped miner.
         paused = miner.get("paused")
         mining_paused = bool(paused) if isinstance(paused, bool) else None
 
@@ -162,7 +174,7 @@ class NmaxeDriver(BitaxeDriver):
         # Single active-pool snapshot for the Pools page. NMAxe also has a
         # fallback slot, but only the *active* pool is in /api/system/info;
         # the full primary/fallback pair lives in /api/setting/mining and
-        # would need a second request — left as a future enhancement.
+        # would need a second request.
         if pool_url:
             sample.pools = [
                 PoolSnapshot(
@@ -176,10 +188,11 @@ class NmaxeDriver(BitaxeDriver):
             ]
         return sample
 
-    # ---- controls (fan only) -------------------------------------------
+    # ---- Control API ----
 
-    async def _patch_preference(self, payload: dict[str, Any]) -> bool:
-        url = f"{self._base_url()}/api/setting/preference"
+    async def _patch(self, path: str, payload: dict[str, Any]) -> bool:
+        """Send a PATCH request to the specified API endpoint path."""
+        url = f"{self._base_url()}{path}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as cli:
                 resp = await cli.patch(url, json=payload)
@@ -187,6 +200,10 @@ class NmaxeDriver(BitaxeDriver):
         except httpx.HTTPError:
             return False
         return True
+
+    async def _patch_preference(self, payload: dict[str, Any]) -> bool:
+        """Send a PATCH to preference endpoint (kept for compatibility & tests)."""
+        return await self._patch("/api/setting/preference", payload)
 
     async def set_fan_speed(self, percent: int) -> bool:
         """Manual fan duty via ``PATCH /api/setting/preference``.
@@ -205,3 +222,76 @@ class NmaxeDriver(BitaxeDriver):
         return await self._patch_preference(
             {"fans": [{"id": 0, "auto": bool(enabled)}]}
         )
+
+    async def set_frequency(self, mhz: int) -> bool:
+        """Set ASIC target frequency in MHz via ``PATCH /api/setting/mining``."""
+        return await self._patch("/api/setting/mining", {"asicFreqReq": int(mhz)})
+
+    async def set_voltage(self, millivolts: int) -> bool:
+        """Set ASIC core voltage in mV via ``PATCH /api/setting/mining``."""
+        return await self._patch("/api/setting/mining", {"asicVcoreReq": int(millivolts)})
+
+    async def pause(self) -> bool:
+        """Stop hashing via NMAxe ``PATCH /api/mining/state`` with ``paused:true``."""
+        return await self._patch("/api/mining/state", {"paused": True})
+
+    async def resume(self) -> bool:
+        """Resume hashing via NMAxe ``PATCH /api/mining/state`` with ``paused:false``."""
+        return await self._patch("/api/mining/state", {"paused": False})
+
+    async def read_pool_config(self) -> PoolConfig:
+        """Read primary and fallback stratum config from ``/api/setting/mining``."""
+        url = f"{self._base_url()}/api/setting/mining"
+        async with httpx.AsyncClient(timeout=self.timeout) as cli:
+            resp = await cli.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+
+        stratum = data.get("stratum") or {}
+        primary = stratum.get("primary") or {}
+        fallback = stratum.get("fallback") or {}
+
+        # Parse URLs using shared Bitaxe host/port splitter
+        p_host, p_port = _split_host_port(primary.get("url"), None)
+        fb_host, fb_port = _split_host_port(fallback.get("url"), None)
+
+        return PoolConfig(
+            url=p_host,
+            port=p_port,
+            user=primary.get("user"),
+            password=primary.get("pwd"),
+            fb_url=fb_host,
+            fb_port=fb_port,
+            fb_user=fallback.get("user"),
+            fb_password=fallback.get("pwd"),
+        )
+
+    async def set_pool(self, config: PoolConfig) -> bool:
+        """Set primary and fallback stratum configs, then reboot to apply."""
+        primary_url = _make_full_url(config.url, config.port)
+        fallback_url = _make_full_url(config.fb_url, config.fb_port)
+
+        payload: dict[str, Any] = {
+            "stratum": {}
+        }
+
+        if primary_url:
+            payload["stratum"]["primary"] = {
+                "url": primary_url,
+                "user": config.user or "",
+                "pwd": config.password or "x",
+            }
+
+        if fallback_url:
+            payload["stratum"]["fallback"] = {
+                "url": fallback_url,
+                "user": config.fb_user or "",
+                "pwd": config.fb_password or "x",
+            }
+
+        if not await self._patch("/api/setting/mining", payload):
+            return False
+
+        # Apply requires a reboot
+        await self.restart()
+        return True

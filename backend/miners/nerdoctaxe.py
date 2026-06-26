@@ -106,12 +106,13 @@ class NerdOctaxeDriver(BitaxeDriver):
         # second fan" rather than "fan stopped". `fanCount` is the
         # authoritative flag for whether a real second fan exists.
         fan_count = _opt_int(data.get("fanCount"))
-        fan_rpm_2 = _opt_int(data.get("fanrpm2"))
-        fan_pct_2 = _opt_float(data.get("fanspeed2"))
+        fan_rpm_2 = _opt_int(data.get("fan2rpm") or data.get("fanrpm2"))
+        fan_pct_2 = _opt_float(data.get("fanspeed2") or data.get("fan2speed"))
         # Only expose the second-fan readings if the firmware reports
         # an actual second fan. Otherwise we'd render a "Fan 2: 0 rpm"
         # tile that's just visual noise.
-        if fan_count and fan_count > 1:
+        has_second_fan = (fan_count is not None and fan_count > 1) or (fan_rpm_2 is not None and fan_rpm_2 > 0)
+        if has_second_fan:
             sample.fan_rpm_2 = fan_rpm_2
             sample.fan_pct_2 = fan_pct_2
 

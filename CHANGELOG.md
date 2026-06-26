@@ -11,17 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **NMAxe miner family (NMAxe / NMAxeGamma / NMQAxe++).** Support for the NMAxe
   AxeOS fork, whose REST surface is fully nested — `GET /api/system/info` groups
-  `power` / `temps` / `asic` / `miner` / `identity` / `stratum` / `fans[]` — with
-  controls under `/api/setting/*` and no MAC. A new `nmaxe` driver reads the full
-  metric set and drives the fan (auto + manual duty via
-  `PATCH /api/setting/preference`) and restart; frequency/voltage, the Guardian
-  co-tuner, pause/shutdown and pool repoint (donate) are intentionally off for
-  this family. Auto-detection fingerprints the board via `GET /probe` ahead of
-  the Bitaxe path, so an NMQAxe++ is no longer mis-classified as nerdoctaxe, and
-  the miner is keyed on its host since NMAxe exposes no MAC (use a static IP /
-  DHCP reservation). Live per-share streaming works over `ws://<ip>/ws` with a
-  dedicated parser, and the last-share difficulty is also read from the poll
-  (`miner.lastDiff`) so the Halo shows it even before the stream connects.
+  `power` / `temps` / `asic` / `miner` / `identity` / `stratum` / `fans[]`. A new
+  `nmaxe` driver reads the full metric set and supports full controls: fan (auto +
+  manual duty via `PATCH /api/setting/preference`), restart (`POST /api/system/restart`),
+  frequency/voltage scaling (`PATCH /api/setting/mining`), pool configuration setting
+  (`PATCH /api/setting/mining`), and runtime pause/resume control (`PATCH /api/mining/state`).
+  Auto-detection fingerprints the board via `GET /probe` ahead of the Bitaxe path, so an
+  NMQAxe++ is no longer mis-classified as nerdoctaxe, and the miner is keyed on its host since
+  NMAxe exposes no MAC (use a static IP / DHCP reservation). Live per-share streaming works
+  over `ws://<ip>/ws` with a dedicated parser, and the last-share difficulty is also read
+  from the poll (`miner.lastDiff`) so the Halo shows it even before the stream connects.
 
 ## [1.19.1] — 2026-06-22
 
