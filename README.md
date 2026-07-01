@@ -18,6 +18,8 @@ browser. No cloud, no telemetry.
 
 **MinerWatch is free. It costs one star ⭐** — [star it](https://github.com/imlenti/MinerWatch) to help other home miners find it.
 
+<a href="https://github.com/imlenti/MinerWatch-Ecosystem" target="_blank" rel="noopener noreferrer"><strong>Discover the MinerWatch Ecosystem →</strong></a>
+
 ![MinerWatch dashboard](docs/screenshots/dashboard.png)
 
 </div>
