@@ -4,8 +4,8 @@
 
 **A local-first dashboard for home Bitcoin miners.**
 
-Monitor and control Bitaxe, NerdQAxe / NerdOCTAXE, BitForge Nano, Canaan
-Avalon Nano 3s and Braiins BMM miners — plus read-only monitoring of
+Monitor and control Bitaxe, NerdQAxe / NerdOCTAXE, BitForge Nano, NMAxe,
+Canaan Avalon Nano 3s and Braiins BMM miners — plus read-only monitoring of
 LuxOS Antminer / Whatsminer rigs — on your home network, all from your
 browser. No cloud, no telemetry.
 
@@ -183,6 +183,7 @@ comfortable opening a terminal but not necessarily developers.
 | Bitaxe            | Gamma 601 / 602, Supra, Ultra, Max         | HTTP REST :80                     | Full       |
 | NerdQAxe / Octaxe | NerdQAxe+, NerdQAxe++, NerdOCTAXE-Plus/Gamma | HTTP REST :80 (Bitaxe-compatible) | Full       |
 | BitForge          | BitForge Nano (forge-os firmware)          | HTTP REST :80 (Bitaxe-compatible) | Full       |
+| NMAxe             | NMAxe (BM1366), NMAxeGamma, NMQAxe++        | HTTP REST :80 (AxeOS fork)        | Fan + restart |
 | Canaan Avalon     | Nano 3s                                     | TCP cgminer-text :4028           | Full       |
 | Braiins           | BMM 101 (BOSminer firmware)                | TCP cgminer-JSON :4028           | Full       |
 | LuxOS (Luxor)     | Bitmain Antminer S19 / S21, MicroBT Whatsminer | TCP cgminer-JSON :4028        | Monitor only |
@@ -198,12 +199,19 @@ firmware) is also AxeOS-derived and is auto-detected via its
 per-ASIC `chiptemp1`/`chiptemp2`, INA260 board current) onto the
 standard readouts and uses the forge-os spelling for fan control.
 
+The **NMAxe** family (NMAxe / NMAxeGamma / NMQAxe++) is an ESP32-S3
+AxeOS fork with a restructured, fully nested REST surface
+(`/api/system/info`, controls under `/api/setting/*`). MinerWatch
+auto-detects it from its `/probe` endpoint and maps the nested payload
+onto the standard readouts. Control is limited to fan (auto + manual)
+and restart.
+
 **LuxOS is monitoring-only for now.** MinerWatch reads hashrate, temps,
 fans, power and pools from LuxOS-flashed Antminer/Whatsminer rigs, but
 exposes no control buttons — LuxOS write commands need a stateful
-session that's intentionally left for a later release. Everything else
-(Bitaxe, Nerd*, Canaan, Braiins) supports fan / frequency / voltage /
-restart control.
+session that's intentionally left for a later release. The other
+families (Bitaxe, Nerd*, BitForge, Canaan, Braiins) support full fan /
+frequency / voltage / restart control; **NMAxe** is fan + restart only.
 
 Adding a new model usually means a single new file in `backend/miners/`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the driver template.
