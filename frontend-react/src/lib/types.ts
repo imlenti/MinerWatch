@@ -570,6 +570,11 @@ export interface SettingsCurrent {
     scan_timeout: number;
   };
   auth_enabled: boolean;
+  guardian: {
+    enabled: boolean;
+    interval_seconds: number;
+    hashrate_average_window_seconds: number;
+  };
 }
 
 export interface SettingsResponse {

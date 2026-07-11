@@ -56,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guardian windowed metrics averaging.** Added windowed averaging of stochastic/noisy metrics (hashrate, temperature, power, and hardware error percentage) inside the Guardian governor loop, preventing false-positive throttling from transient dips or peaks. The averaging window can be configured via a new global setting in the general tab (defaults to 30 seconds, set to 0 to disable).
 - **NMAxe miner family (NMAxe / NMAxeGamma / NMQAxe++).** Support for the NMAxe
   AxeOS fork, whose REST surface is fully nested — `GET /api/system/info` groups
   `power` / `temps` / `asic` / `miner` / `identity` / `stratum` / `fans[]` — with

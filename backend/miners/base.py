@@ -356,6 +356,7 @@ class MinerSample:
             "best_difficulty": self.best_difficulty,
             "pool_url": self.pool_url,
             "worker": self.worker,
+            "error_pct": self.error_pct,
             "raw": self.raw,
         }
 
