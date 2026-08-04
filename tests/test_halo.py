@@ -107,6 +107,68 @@ def test_net_diff_falls_back_to_cache_when_no_live():
     assert out["net_diff"] == 1.2e14
 
 
+# ---------- net_diff on a mixed BTC/BCH fleet ----------
+# The gauge draws last_diff against net_diff, so both must describe the
+# same chain. "Highest difficulty in the fleet" always resolves to BTC and
+# made every BCH share look ~1000x further from a block than it really was.
+
+REFS = {"btc": 1.2e14, "bch": 4.0e11}
+
+
+def test_net_diff_follows_the_coin_of_the_displayed_share():
+    miners = [_miner(1, "BtcRig"), _miner(2, "BchRig")]
+    samples = {
+        1: _sample(network_difficulty=1.2e14),
+        2: _sample(network_difficulty=4.0e11),
+    }
+    # The newest share came from the BCH miner, so grade it against BCH.
+    live = {2: {"submitted_total": 10, "last_diff": 5.0e8, "last_ts": 200.0, "name": "BchRig"}}
+    out = _build(miners=miners, samples=samples, live_shares=live, references=REFS)
+    assert out["net_diff"] == 4.0e11
+
+    # Same fleet, newest share from the BTC miner → the BTC difficulty.
+    live = {1: {"submitted_total": 10, "last_diff": 9.0e9, "last_ts": 300.0, "name": "BtcRig"}}
+    out = _build(miners=miners, samples=samples, live_shares=live, references=REFS)
+    assert out["net_diff"] == 1.2e14
+
+
+def test_net_diff_uses_the_reference_when_that_miner_reports_none():
+    # A Canaan pinned to BCH by hand: no stratum reading of its own, so the
+    # reference difficulty for its coin has to carry the gauge.
+    miners = [_miner(1, "BtcRig"), {**_miner(2, "Avalon"), "coin_override": "bch"}]
+    samples = {
+        1: _sample(network_difficulty=1.2e14),
+        2: _sample(network_difficulty=None),
+    }
+    live = {2: {"submitted_total": 4, "last_diff": 1.0e8, "last_ts": 500.0, "name": "Avalon"}}
+    out = _build(miners=miners, samples=samples, live_shares=live, references=REFS)
+    assert out["net_diff"] == 4.0e11
+
+
+def test_net_diff_attributes_a_persisted_notable_share_to_its_miner():
+    miners = [_miner(1, "BtcRig"), _miner(2, "BchRig")]
+    samples = {
+        1: _sample(network_difficulty=1.2e14),
+        2: _sample(network_difficulty=4.0e11),
+    }
+    latest = {"miner_id": 2, "ts": 900, "share_difficulty": 7.0e8, "name": "BchRig"}
+    out = _build(miners=miners, samples=samples, latest_share=latest, references=REFS)
+    assert out["net_diff"] == 4.0e11
+    assert out["last_diff"] == 7.0e8
+
+
+def test_net_diff_keeps_the_fleet_wide_behaviour_without_references():
+    # No references passed (cold cache): fall back to the old rule rather
+    # than dropping the gauge.
+    miners = [_miner(1, "a"), _miner(2, "b")]
+    samples = {
+        1: _sample(network_difficulty=1.1e14),
+        2: _sample(network_difficulty=1.3e14),
+    }
+    out = _build(miners=miners, samples=samples)
+    assert out["net_diff"] == 1.3e14
+
+
 # ---------- best / top / last share ----------
 
 def test_best_and_top_and_last_share():

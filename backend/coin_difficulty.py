@@ -102,6 +102,47 @@ async def get_difficulty(coin: str) -> Optional[float]:
         return _stale(coin)
 
 
+async def warm_cache() -> None:
+    """Refresh every supported coin's difficulty, best-effort.
+
+    Called from the poller so that consumers which must never block on the
+    network — the 1 Hz ``/api/halo``, the pools table, the block-found
+    check — always find a usable reference in the cache. Each lookup is
+    already TTL-cached, so a call on a warm cache does no I/O at all and
+    the real fetch happens roughly once per coin per TTL.
+
+    Errors are swallowed by :func:`get_difficulty` itself, which falls back
+    to the last known value; this wrapper additionally guarantees that one
+    coin failing can't stop the others from refreshing.
+    """
+    for coin in supported_coins():
+        try:
+            await get_difficulty(coin)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("difficulty warm-up for %s failed: %s", coin, exc)
+
+
+def cached_references() -> Dict[str, Optional[float]]:
+    """Every supported coin's cached difficulty, without any network call.
+
+    The reference map ``backend/coin.py`` classifies against. Values may be
+    ``None`` on a cold cache, which the classifier handles by simply
+    skipping that coin.
+    """
+    return {coin: cached_difficulty(coin) for coin in supported_coins()}
+
+
+async def references() -> Dict[str, Optional[float]]:
+    """Like :func:`cached_references`, but refreshes stale entries first.
+
+    For callers that can afford to wait on the (rare, TTL-gated) fetch and
+    want the freshest possible classification — currently only the
+    Analytics prediction endpoint, which the user loads on demand.
+    """
+    await warm_cache()
+    return cached_references()
+
+
 def cached_difficulty(coin: str) -> Optional[float]:
     """Return the cached difficulty for ``coin`` without any network call.
 

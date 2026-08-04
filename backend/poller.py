@@ -18,7 +18,7 @@ import math
 import time
 
 from .config import get_config
-from . import db, alerts
+from . import db, alerts, coin as coin_mod, coin_difficulty
 from .log_streamer import log_streamer
 from .miners import driver_for_record
 from .miners.base import MinerSample
@@ -32,6 +32,10 @@ class Poller:
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
         self._last_results: dict[int, MinerSample] = {}
+        # Background refresh of the per-coin reference difficulties. Kept
+        # off the poll path so a slow explorer can never delay a cycle;
+        # the handle exists only so we don't stack up duplicate tasks.
+        self._difficulty_task: asyncio.Task | None = None
         # Per-miner state for the hashrate EMA. We smooth server-side because:
         # - Bitaxe already exposes a ~1m firmware average (light smoothing ok)
         # - Braiins now reads GHS 1m (light smoothing ok)
@@ -86,6 +90,9 @@ class Poller:
         # so notify_new_alltime_best gets a friendly device name without
         # an extra DB roundtrip.
         names_by_id = {int(m["id"]): m.get("name") or m.get("host") for m in miners}
+        # Full rows too: the block-found check needs each miner's
+        # coin_override to resolve which chain to grade its best share on.
+        miners_by_id = {int(m["id"]): m for m in miners}
         out: dict[int, MinerSample] = {}
         for miner_id, sample in results:
             self._smooth_hashrate(miner_id, sample, cfg_now)
@@ -148,9 +155,28 @@ class Poller:
                     # Prefer the network difficulty the miner itself is
                     # using (consistent with its share grading). Fall
                     # back to the cached/external value otherwise.
-                    network_diff = await alerts.get_network_difficulty(
-                        miner_hint=sample.network_difficulty,
-                    )
+                    #
+                    # The fallback must be the difficulty of the coin THIS
+                    # miner is on: alerts.get_network_difficulty() only ever
+                    # knows about Bitcoin, so on firmware that reports no
+                    # stratum difficulty (Braiins, LuxOS, Canaan) a BCH miner
+                    # used to be measured against the BTC target — roughly a
+                    # thousand times too high, meaning a real BCH block would
+                    # never have fired this alert. Resolve the coin first and
+                    # use its own difficulty; fall through to the Bitcoin
+                    # path only when the coin is genuinely unknown.
+                    network_diff = None
+                    if sample.network_difficulty:
+                        network_diff = float(sample.network_difficulty)
+                    else:
+                        references = coin_difficulty.cached_references()
+                        miner_coin, _ = coin_mod.classify(
+                            miners_by_id.get(miner_id), sample, references
+                        )
+                        if miner_coin:
+                            network_diff = references.get(miner_coin)
+                    if network_diff is None:
+                        network_diff = await alerts.get_network_difficulty()
                     if network_diff and sample.best_difficulty >= network_diff:
                         await alerts.notify_block_found(
                             miner_id=miner_id,
@@ -190,6 +216,7 @@ class Poller:
         while not self._stop.is_set():
             cycle_start = time.monotonic()
             try:
+                self._warm_coin_difficulties()
                 await self.poll_once()
                 # Rollup runs ~every minute (cheap, idempotent), cleanup
                 # runs ~every hour. Both are guarded by separate "last
@@ -207,6 +234,22 @@ class Poller:
             except asyncio.TimeoutError:
                 continue
         log.info("Poller stopped")
+
+    def _warm_coin_difficulties(self) -> None:
+        """Kick off a background refresh of the per-coin difficulties.
+
+        Fire-and-forget on purpose: coin classification and the block-found
+        check both need a reference difficulty per coin, but neither is
+        worth delaying a poll cycle for. The TTL cache inside
+        ``coin_difficulty`` means the spawned task usually returns without
+        touching the network, and the in-flight guard keeps a slow fetch
+        from spawning a new task on every tick.
+        """
+        if self._difficulty_task and not self._difficulty_task.done():
+            return
+        self._difficulty_task = asyncio.create_task(
+            coin_difficulty.warm_cache(), name="minerwatch-coin-difficulty"
+        )
 
     def _smooth_hashrate(self, miner_id: int, sample: MinerSample, cfg) -> None:
         """Apply an EMA to the sample's hashrate (in-place).

@@ -459,6 +459,10 @@ def _init_db_sync() -> None:
             # Last-known display name of the assigned sensor, cached so the
             # room label stays friendly even while that sensor is offline.
             "ALTER TABLE miners ADD COLUMN ambient_sensor_name TEXT",
+            # Which SHA-256 coin this miner mines ('btc' | 'bch'), set by hand
+            # when automatic detection can't tell. NULL = detect it (see
+            # backend/coin.py); a value here always wins over detection.
+            "ALTER TABLE miners ADD COLUMN coin_override TEXT",
             # Per-trophy dashboard visibility (see block_finds DDL).
             "ALTER TABLE block_finds ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
         ]:
@@ -556,6 +560,24 @@ async def set_ambient_sensor(
             "UPDATE miners SET ambient_sensor_id = ?, ambient_sensor_name = ?, "
             "updated_at = ? WHERE id = ?",
             (sensor_id, name if sensor_id else None, now_ts(), miner_id),
+        )
+        await conn.commit()
+
+
+async def set_coin_override(miner_id: int, coin: str | None) -> None:
+    """Pin which SHA-256 coin this miner mines, or None to auto-detect.
+
+    Only needed for firmware that doesn't report its stratum network
+    difficulty (Braiins, LuxOS, Canaan) and whose pool gives away no other
+    hint — everything else classifies itself. Stored as a plain 'btc' /
+    'bch' string; the caller validates it (see ``coin.normalize``), and
+    ``coin.classify`` treats anything unrecognised as "not set" so a bad
+    value degrades to auto-detection instead of corrupting the odds.
+    """
+    async with connect() as conn:
+        await conn.execute(
+            "UPDATE miners SET coin_override = ?, updated_at = ? WHERE id = ?",
+            (coin, now_ts(), miner_id),
         )
         await conn.commit()
 

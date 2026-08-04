@@ -15,8 +15,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ApiError } from '@/lib/api';
 import { fmtRelative, FAMILY_LABEL } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { usePools } from '@/api/hooks';
-import type { PoolRow } from '@/lib/types';
+import { usePools, useSetMinerCoin } from '@/api/hooks';
+import type { CoinSource, MinedCoin, PoolRow } from '@/lib/types';
 
 // Fleet-wide view of every pool configured on every miner. One row per
 // (miner, pool slot) — the cgminer-family drivers contribute one row
@@ -46,6 +46,7 @@ type SortKey =
   | 'miner'
   | 'url'
   | 'user'
+  | 'coin'
   | 'status'
   | 'ping'
   | 'accepted'
@@ -53,6 +54,28 @@ type SortKey =
   | 'stale'
   | 'reject_pct'
   | 'last_share';
+
+// Coin column. This table is where the answer comes from — the pool a miner
+// is pointed at is what decides which chain its hashrate goes to — so it's
+// also where a wrong detection is visible and where the user corrects it.
+const COIN_LABEL: Record<MinedCoin, string> = {
+  btc: 'BTC',
+  bch: 'BCH',
+};
+
+// How confident the badge should look, and what the tooltip explains.
+const COIN_SOURCE_HINT: Record<CoinSource, string> = {
+  override: 'Set by you',
+  stratum: 'From the network difficulty the miner reports — the pool’s own value',
+  address: 'From the payout address format in the pool user',
+  pool: 'Guessed from the pool hostname — check this one',
+};
+
+const COIN_CHOICES: Array<{ value: MinedCoin | null; label: string }> = [
+  { value: null, label: 'Auto' },
+  { value: 'btc', label: 'BTC' },
+  { value: 'bch', label: 'BCH' },
+];
 
 interface SortState {
   key: SortKey;
@@ -158,6 +181,13 @@ export function PoolsPage() {
         case 'user':
           av = a.user?.toLowerCase() ?? null;
           bv = b.user?.toLowerCase() ?? null;
+          break;
+        case 'coin':
+          // Null sorts to the bottom via compareNullable, which is what we
+          // want: the undetected miners are the ones needing attention and
+          // one click sorts them into a block.
+          av = a.coin ?? null;
+          bv = b.coin ?? null;
           break;
         case 'status':
           av = poolHealth(a).label;
@@ -316,6 +346,7 @@ export function PoolsPage() {
                   <Th label="Miner" sortKey="miner" sort={sort} onSort={toggleSort} />
                   <Th label="URL" sortKey="url" sort={sort} onSort={toggleSort} />
                   <Th label="User" sortKey="user" sort={sort} onSort={toggleSort} />
+                  <Th label="Coin" sortKey="coin" sort={sort} onSort={toggleSort} />
                   <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
                   <Th
                     label="Ping"
@@ -365,7 +396,7 @@ export function PoolsPage() {
                 {visibleRows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={10}
+                      colSpan={11}
                       className="px-3 py-8 text-center text-sm text-muted-foreground"
                     >
                       No pools match the “{filter}” filter.
@@ -388,6 +419,16 @@ export function PoolsPage() {
         but not by Braiins or LuxOS. Stale and Last share come from
         cgminer-family firmwares (Braiins, LuxOS, Avalon) and aren't exposed by
         AxeOS-based miners. Any value a firmware doesn't report shows "—".
+      </p>
+
+      <p className="text-xs text-muted-foreground">
+        Coin is which SHA-256 chain a miner's hashrate is going to, used for
+        the solo-mining odds on Analytics and for the block-found alert. It's
+        detected automatically from the network difficulty the miner reports,
+        or from the pool address — click any badge to pin it by hand. Miners
+        marked <strong>Not set</strong> are left out of the odds rather than
+        credited to the wrong chain; Braiins, LuxOS and Avalon report no
+        network difficulty, so those are the ones that may need pinning.
       </p>
     </div>
   );
@@ -465,6 +506,9 @@ function PoolRowView({ row }: { row: PoolRow }) {
         <span className="break-all text-xs">{row.user ?? '—'}</span>
       </td>
       <td className="px-3 py-2 align-top">
+        <CoinCell row={row} />
+      </td>
+      <td className="px-3 py-2 align-top">
         <Badge variant={health.tone} className="whitespace-nowrap">
           {health.label}
         </Badge>
@@ -499,5 +543,80 @@ function PoolRowView({ row }: { row: PoolRow }) {
         {fmtRelative(row.last_share_ts)}
       </td>
     </tr>
+  );
+}
+
+/**
+ * Coin badge with an inline override.
+ *
+ * Most miners never need touching: firmware that reports its stratum
+ * network difficulty (the Bitaxe family) is detected automatically, and so
+ * are pools whose hostname or payout address names the chain. The picker
+ * exists for the rest — Braiins, LuxOS and Canaan on a pool that gives
+ * nothing away — where the estimates on the Analytics tab and the
+ * block-found alert would otherwise have nothing to go on.
+ */
+function CoinCell({ row }: { row: PoolRow }) {
+  const [editing, setEditing] = useState(false);
+  const setCoin = useSetMinerCoin(row.miner_id);
+  const pinned = row.coin_override !== null;
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-1">
+        <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
+          {COIN_CHOICES.map((choice) => (
+            <Button
+              key={choice.label}
+              size="sm"
+              variant={row.coin_override === choice.value ? 'default' : 'ghost'}
+              className="h-6 px-2 text-[11px]"
+              disabled={setCoin.isPending}
+              onClick={() => {
+                setCoin.mutate(choice.value, { onSuccess: () => setEditing(false) });
+              }}
+            >
+              {choice.label}
+            </Button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="text-left text-[10px] text-muted-foreground hover:text-foreground"
+          onClick={() => setEditing(false)}
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title={
+        row.coin_source
+          ? COIN_SOURCE_HINT[row.coin_source]
+          : 'We couldn’t detect this miner’s coin — click to set it'
+      }
+      className="flex flex-col items-start gap-0.5 text-left"
+    >
+      {row.coin ? (
+        <Badge
+          variant={pinned ? 'outline' : 'secondary'}
+          className="whitespace-nowrap"
+        >
+          {COIN_LABEL[row.coin]}
+        </Badge>
+      ) : (
+        <Badge variant="warning" className="whitespace-nowrap">
+          Not set
+        </Badge>
+      )}
+      <span className="text-[10px] text-muted-foreground">
+        {pinned ? 'pinned' : row.coin ? 'detected' : 'click to set'}
+      </span>
+    </button>
   );
 }

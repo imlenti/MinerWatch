@@ -19,6 +19,7 @@ import type {
   MinerCreatePayload,
   MinerDetailResponse,
   MinerListResponse,
+  MinedCoin,
   MinerOrderResponse,
   NotableSharesResponse,
   PoolsResponse,
@@ -458,6 +459,31 @@ export function useSetAmbientSensor(minerId: number) {
       // (the dashboard card's read-only room label) so both reflect the change.
       qc.invalidateQueries({ queryKey: ['miner', minerId] });
       qc.invalidateQueries({ queryKey: ['miners'] });
+    },
+  });
+}
+
+// Pin which SHA-256 coin a miner mines — pass null to go back to
+// auto-detection. Only needed for firmware that reports no stratum network
+// difficulty (Braiins, LuxOS, Canaan) on a pool whose URL and payout
+// address give nothing away; everything else classifies itself.
+//
+// Invalidates the pools table (where the badge lives), the miner detail
+// and the fleet list, plus the prediction so the Analytics sub-tabs
+// re-group immediately instead of after the next poll.
+export function useSetMinerCoin(minerId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (coin: MinedCoin | null) =>
+      api(`/api/miners/${minerId}/coin`, {
+        method: 'POST',
+        body: { coin },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pools'] });
+      qc.invalidateQueries({ queryKey: ['miner', minerId] });
+      qc.invalidateQueries({ queryKey: ['miners'] });
+      qc.invalidateQueries({ queryKey: ['fleet-prediction'] });
     },
   });
 }

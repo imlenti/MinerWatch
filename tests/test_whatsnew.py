@@ -2,9 +2,10 @@
 """Tests for the What's-new changelog extraction (backend/whatsnew.py).
 
 Covers the parsing convention (bold bullet leads → dialog highlights),
-section isolation between versions, the cap, the fallback path of
-get_whatsnew, and — as a release-time guard — that the *real*
-CHANGELOG.md still follows the convention for the version it ships.
+section isolation between versions, the cap, the single-note release
+that is shown in full, the fallback path of get_whatsnew, and — as a
+release-time guard — that the *real* CHANGELOG.md still follows the
+convention for the version it ships.
 
 Runs under pytest, or standalone: ``python tests/test_whatsnew.py``.
 """
@@ -65,6 +66,49 @@ def test_missing_version_returns_empty():
     assert whatsnew.parse_changelog_highlights("", "2.0.0") == []
 
 
+# ---------- single-note release: shown in full ----------
+# The teaser rules keep a multi-item dialog from becoming the changelog.
+# With one item there is nothing to keep short, and a release whose only
+# note is an announcement has to be readable without leaving the app.
+
+SINGLE = """# Changelog
+
+## [3.0.0] — 2026-08-04
+
+- **A short lead.** First sentence of the notice. Second sentence that must
+  survive. And a third one, well past the {cap}-character teaser cap, so the
+  truncation path would definitely have chopped it. {filler}
+
+## [2.0.0] — 2026-01-02
+
+- **Older entry.** Must not leak.
+""".format(cap=whatsnew.MAX_BODY_CHARS, filler="word " * 60)
+
+
+def test_single_note_release_keeps_the_whole_detail():
+    items = whatsnew.parse_changelog_highlights(SINGLE, "3.0.0")
+    assert len(items) == 1
+    body = items[0]["body"]
+    assert body.startswith("First sentence of the notice.")
+    assert "Second sentence that must survive." in body
+    assert "third one" in body
+    assert not body.endswith("…")
+    assert len(body) > whatsnew.MAX_BODY_CHARS
+
+
+def test_single_note_body_is_flattened_to_one_paragraph():
+    body = whatsnew.parse_changelog_highlights(SINGLE, "3.0.0")[0]["body"]
+    assert "\n" not in body
+    assert "  " not in body
+
+
+def test_multi_note_release_still_gets_teasers():
+    """The full-body rule must not leak into ordinary releases."""
+    items = whatsnew.parse_changelog_highlights(SAMPLE, "2.0.0")
+    assert len(items) > 1
+    assert items[0]["body"] == "Long detail sentence one."
+
+
 def test_get_whatsnew_falls_back_when_changelog_absent(tmp_path=None):
     import tempfile
     original_root = whatsnew.ROOT_DIR
@@ -92,6 +136,22 @@ def test_real_changelog_keeps_the_convention_for_1_11_0():
     assert len(items) == 4
     assert items[0]["title"] == "Umbrel desktop widgets"
     assert all(i["body"] for i in items)
+
+
+def test_real_changelog_shows_the_1_19_6_notice_in_full():
+    """The 1.19.6 dialog carries an announcement, not a feature list, so
+    the whole thing has to reach the user — no first-sentence teaser and
+    no truncation."""
+    text = (pathlib.Path(__file__).resolve().parents[1] / "CHANGELOG.md").read_text(
+        encoding="utf-8"
+    )
+    items = whatsnew.parse_changelog_highlights(text, "1.19.6")
+    assert len(items) == 1
+    assert items[0]["title"].startswith("IMPORTANT")
+    body = items[0]["body"]
+    assert body.startswith("No donations have come in")
+    assert body.endswith("please give this a thought.")
+    assert not body.endswith("…")
 
 
 if __name__ == "__main__":

@@ -25,10 +25,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import db
+from . import coin as coin_mod
 from . import coin_difficulty
 from . import btc_price
 from . import halo
 from . import panel
+from . import predictions
 from . import system_info
 from . import umbrel_widgets
 from . import whatsnew
@@ -542,11 +544,18 @@ async def api_list_pools() -> dict:
     that looks broken until the first poll completes.
     """
     miners = await db.list_miners()
+    # Cache-only read: this endpoint must stay free of network calls.
+    references = coin_difficulty.cached_references()
     rows: list[dict[str, Any]] = []
     for m in miners:
         sample = poller.last_results.get(m["id"])
         live_online = bool(sample.online) if sample else None
         live_error = sample.error if sample else None
+        # Which chain this miner's hashrate is going to, and how we know.
+        # Surfaced here because the pool is where the answer comes from, so
+        # this table is both where a misdetection is obvious and where the
+        # user fixes it (POST /api/miners/{id}/coin).
+        detected_coin, coin_source = coin_mod.classify(m, sample, references)
         miner_meta = {
             "miner_id": m["id"],
             "miner_name": m.get("name") or m.get("host"),
@@ -554,6 +563,9 @@ async def api_list_pools() -> dict:
             "family": m.get("family"),
             "live_online": live_online,
             "live_error": live_error,
+            "coin": detected_coin,
+            "coin_source": coin_source,
+            "coin_override": coin_mod.normalize(m.get("coin_override")),
         }
         if sample and sample.pools:
             for p in sample.pools:
@@ -1011,6 +1023,7 @@ async def api_halo() -> dict:
         live_shares=_halo_live_shares(miners),
         btc_price=btc_usd,
         btc_change=btc_chg,
+        references=coin_difficulty.cached_references(),
     )
 
 
@@ -1233,131 +1246,52 @@ async def api_miner_notable_shares(miner_id: int, limit: int = 50) -> dict:
 
 @app.get("/api/fleet/prediction")
 async def api_fleet_prediction(coin: str = "auto") -> dict:
-    """Statistical prediction widget per il fleet.
+    """Solo-mining odds for the Analytics "Predictions" widget.
 
-    ``coin`` controlla quale difficoltà di rete usare per la stima
-    "Find a block (solo)":
-      * ``auto`` (default) — usa la ``network_difficulty`` riportata via
-        stratum dal miner, cioè la moneta che stiamo effettivamente minando
-        (comportamento storico, invariato).
-      * ``btc`` / ``bch`` — recupera la difficoltà di rete corrente di quella
-        moneta da un explorer pubblico (vedi ``coin_difficulty``), così
-        l'utente può confrontare le proprie chance cambiando moneta a parità
-        di hashrate. Se il recupero fallisce, ``network_difficulty`` resta
-        ``None`` e la stima viene semplicemente omessa.
+    All the maths lives in ``backend/predictions.py`` (pure, unit-tested);
+    this endpoint only gathers the inputs. See that module for the Poisson
+    model and for why the fleet is partitioned by coin.
 
+    ``coin`` selects what the headline "Find a block (solo)" figure answers:
 
-    Calcola la probabilità di battere il best-share all-time corrente
-    entro 1h / 24h / 7d, e l'expected time to beat. Se almeno un miner
-    online espone ``network_difficulty`` via stratum, calcoliamo anche la
-    probabilità di trovare un blocco a difficoltà di rete corrente —
-    questa è la metrica che il solo miner vuole davvero vedere.
+      * ``auto`` (default) — the real odds. ``groups`` holds one entry per
+        coin the fleet is actually mining, each computed from that coin's
+        own hashrate against its own network difficulty. A fleet split
+        across BTC and BCH gets two independent estimates instead of one
+        meaningless blend.
+      * ``btc`` / ``bch`` — a what-if: the *whole* fleet's hashrate against
+        that coin's difficulty, so the user can compare "what would I gain
+        by pointing everything at the other chain". Fetches the difficulty
+        from a public explorer; if that fails the estimate is omitted
+        rather than computed against a wrong target.
 
-    Formula (Poisson, share solo-mining):
-        rate = H / (D · 2^32)  shares-di-difficolta'-D-per-secondo
-        P(t) = 1 - exp(-rate · t)
-        E[T] = 1 / rate
-
-    Output:
-      {
-        "fleet_hashrate_ths": float | None,   # somma device online
-        "best_alltime": {value, ts, miner_id, miner_name} | None,
-        "network_difficulty": float | None,
-        "predictions": {
-          "beat_best": {
-            "expected_time_s": float | None,
-            "probability": {"1h": .., "24h": .., "7d": ..},
-          } | None,
-          "find_block": {
-            "expected_time_s": float | None,
-            "probability": {"1h": .., "24h": .., "7d": ..},
-          } | None
-        }
-      }
+    ``groups`` is returned in both modes. Miners whose coin couldn't be
+    determined appear in a group with ``coin: null`` and no odds — visible
+    so the user can fix them with an override, but never folded into
+    another coin's hashrate.
     """
-    import math
-
-    # ---- Hashrate corrente del fleet: somma dei live sample online ----
-    fleet_h_ths: float = 0.0
-    any_hashrate = False
-    network_diff: float | None = None
     miners = await db.list_miners()
-    for m in miners:
-        sample = poller.last_results.get(m["id"])
-        if not sample or not sample.online:
-            continue
-        if sample.hashrate_ths is not None:
-            fleet_h_ths += float(sample.hashrate_ths)
-            any_hashrate = True
-        # Prendiamo la prima network_difficulty disponibile. Tutti i miner
-        # collegati allo stesso pool dovrebbero esporre lo stesso valore;
-        # se differiscono, l'ordine di iterazione decide ma la differenza
-        # è trascurabile per gli scopi della predizione.
-        if network_diff is None and sample.network_difficulty:
-            try:
-                nd = float(sample.network_difficulty)
-                if nd > 0:
-                    network_diff = nd
-            except (TypeError, ValueError):
-                pass
-
-    # ---- Coin override per "Find a block" ----------------------------
-    # Default ("auto"): teniamo la difficoltà stratum calcolata sopra.
-    # Per btc/bch sostituiamo con la difficoltà di rete di quella moneta
-    # presa da un explorer pubblico. Su fallimento azzeriamo network_diff
-    # (meglio nessuna stima che una stima su difficoltà sbagliata).
-    coin_req = (coin or "auto").strip().lower()
-    coin_used = "auto"
-    if coin_req in coin_difficulty.supported_coins():
-        coin_used = coin_req
-        ext_diff = await coin_difficulty.get_difficulty(coin_req)
-        network_diff = ext_diff if (ext_diff and ext_diff > 0) else None
-
-    # ---- Best all-time del fleet ----
+    # On-demand endpoint, so we can afford the (TTL-gated) refresh to give
+    # the classifier the freshest reference difficulties available.
+    references = await coin_difficulty.references()
     best = (await db.get_fleet_best_records()).get("alltime")
 
-    def _prediction(target_diff: float | None) -> dict | None:
-        """Per un target di difficoltà, calcola E[T] e P(1h/24h/7d).
+    requested = (coin or "auto").strip().lower()
+    forced_coin: str | None = None
+    forced_difficulty: float | None = None
+    if requested in coin_difficulty.supported_coins():
+        forced_coin = requested
+        value = references.get(requested)
+        forced_difficulty = value if (value and value > 0) else None
 
-        Usa la conversione TH/s → hashes/s (×1e12) e ``D · 2^32`` come
-        numero medio di hash per beccare uno share di quella difficoltà.
-        """
-        if not target_diff or target_diff <= 0:
-            return None
-        if not any_hashrate or fleet_h_ths <= 0:
-            return None
-        hashes_per_s = fleet_h_ths * 1e12
-        expected_hashes = target_diff * (2.0 ** 32)
-        rate = hashes_per_s / expected_hashes  # share/s di quella difficolta'
-        if rate <= 0:
-            return None
-        expected_t = 1.0 / rate
-        # Cap exp argument per evitare overflow (in pratica per t enormi
-        # P → 1, ma exp(-1e10) sotto-flow è comunque safe in Python).
-        def _p(t: float) -> float:
-            return 1.0 - math.exp(-min(rate * t, 700.0))
-        return {
-            "expected_time_s": expected_t,
-            "probability": {
-                "1h": _p(3600),
-                "24h": _p(86400),
-                "7d": _p(7 * 86400),
-            },
-        }
-
-    beat_best = _prediction(best["value"] if best else None)
-    find_block = _prediction(network_diff)
-
-    return {
-        "fleet_hashrate_ths": round(fleet_h_ths, 4) if any_hashrate else None,
-        "best_alltime": best,
-        "network_difficulty": network_diff,
-        "coin": coin_used,
-        "predictions": {
-            "beat_best": beat_best,
-            "find_block": find_block,
-        },
-    }
+    return predictions.build_prediction_payload(
+        miners=miners,
+        samples=poller.last_results,
+        references=references,
+        best_alltime=best,
+        forced_coin=forced_coin,
+        forced_difficulty=forced_difficulty,
+    )
 
 
 @app.get("/api/miners/{miner_id}/best_difficulty")
@@ -2063,6 +1997,45 @@ async def api_miner_ambient_sensor(
     name = payload.name if payload.sensor_id else None
     await db.set_ambient_sensor(miner_id, payload.sensor_id, name)
     return {"ok": True, "miner_id": miner_id, "sensor_id": payload.sensor_id, "name": name}
+
+
+class CoinOverridePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # 'btc' | 'bch' to pin the coin, or null to go back to auto-detection.
+    coin: str | None = None
+
+    @field_validator("coin")
+    @classmethod
+    def _known_coin_or_none(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        normalized = coin_mod.normalize(v)
+        if normalized is None:
+            supported = ", ".join(coin_mod.COINS)
+            raise ValueError(f"coin must be one of: {supported} — or null")
+        return normalized
+
+
+@app.post("/api/miners/{miner_id}/coin")
+async def api_miner_coin(miner_id: int, payload: CoinOverridePayload) -> dict:
+    """Pin which SHA-256 coin this miner mines, or null to auto-detect.
+
+    Most miners never need this: firmware that reports its stratum network
+    difficulty (the Bitaxe family) is classified automatically, and pools
+    whose hostname or payout address names the chain are too. It exists for
+    the rest — Braiins, LuxOS and Canaan on a pool that gives nothing away —
+    where the alternative would be guessing, and a wrong guess silently
+    corrupts the solo-mining odds and the block-found threshold.
+
+    Setting an override always wins over detection, so it also serves as
+    the correction path when a heuristic gets it wrong.
+    """
+    miner = await db.get_miner(miner_id)
+    if not miner:
+        raise HTTPException(404, "miner not found")
+    await db.set_coin_override(miner_id, payload.coin)
+    return {"ok": True, "miner_id": miner_id, "coin": payload.coin}
 
 
 # ---------- API: settings ----------

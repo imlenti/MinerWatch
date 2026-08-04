@@ -11,7 +11,9 @@ calls — documented at :func:`_advance_share_seq`.
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
+
+from . import coin as coin_mod
 
 # Lower bound of the log scale: the pool's minimum share difficulty. A
 # constant is fine here — pool floors don't move much and the consumer
@@ -75,34 +77,45 @@ def _pick_last_share(
     latest_share: Mapping[str, Any] | None,
     best_diff: float,
     session: Mapping[str, Any],
-) -> tuple[float, str]:
-    """Pick (difficulty, miner_name) of the most recent share to show.
+) -> tuple[float, str, int | None]:
+    """Pick (difficulty, miner_name, miner_id) of the most recent share.
 
     Prefers the live per-share feed (the newest *submitted* share across
     AxeOS miners); falls back to the most recent persisted notable share,
     then to the session best record. The live feed is far more frequent,
     so on an AxeOS fleet it effectively always wins.
+
+    The miner id rides along so the caller can grade this share against the
+    difficulty of the chain it was actually mined on; it is ``None`` when
+    the share came from a source that doesn't identify a miner.
     """
     live_ts: float | None = None
     live_diff: float | None = None
     live_name: Any = None
-    for lv in (live_shares or {}).values():
+    live_id: int | None = None
+    for miner_id, lv in (live_shares or {}).items():
         ts = _num(lv.get("last_ts"))
         diff = _num(lv.get("last_diff"))
         if ts is None or diff is None:
             continue
         if live_ts is None or ts > live_ts:
             live_ts, live_diff, live_name = ts, diff, lv.get("name")
+            live_id = miner_id
 
     notable_ts = _num(latest_share.get("ts")) if latest_share else None
     notable_diff = _num(latest_share.get("share_difficulty")) if latest_share else None
     notable_name = latest_share.get("name") if latest_share else None
+    notable_id = latest_share.get("miner_id") if latest_share else None
 
     if live_diff is not None and (notable_ts is None or live_ts >= notable_ts):
-        return live_diff, str(live_name or "—")
+        return live_diff, str(live_name or "—"), live_id
     if notable_diff is not None:
-        return notable_diff, str(notable_name or "—")
-    return best_diff, str(session.get("miner_name") or "—")
+        try:
+            resolved_id = int(notable_id) if notable_id is not None else None
+        except (TypeError, ValueError):
+            resolved_id = None
+        return notable_diff, str(notable_name or "—"), resolved_id
+    return best_diff, str(session.get("miner_name") or "—"), None
 
 
 def build_halo_payload(
@@ -116,6 +129,7 @@ def build_halo_payload(
     btc_price: float | None = None,
     btc_change: float | None = None,
     floor: float = DEFAULT_FLOOR_DIFF,
+    references: Mapping[str, Optional[float]] | None = None,
 ) -> dict[str, Any]:
     """Build the exact JSON object the ``/api/halo`` consumer expects.
 
@@ -136,12 +150,22 @@ def build_halo_payload(
                        ``btc_price`` rounded to an integer, omitted when None
     ``btc_change``     signed 24h % change, or ``None``; emitted as
                        ``btc_change`` (2 decimals), omitted when None
+    ``references``     per-coin network difficulties (``coin_difficulty.
+                       cached_references()``), used to work out which chain
+                       the displayed share belongs to on a mixed fleet.
+                       Optional: without it the gauge falls back to the
+                       fleet-wide behaviour described under ``net_diff``.
     """
     live_shares = live_shares or {}
+    references = references or {}
     total_ths = 0.0
     online_count = 0
     raw_seq = 0
     net_live: float | None = None
+    # Live stratum difficulty per miner, so the gauge can pick the one
+    # belonging to the chain the displayed share came from.
+    net_by_miner: dict[int, float] = {}
+    coin_by_miner: dict[int, str | None] = {}
 
     for m in miners:
         sample = samples.get(m["id"])
@@ -158,6 +182,9 @@ def build_halo_payload(
             nd = _num(getattr(sample, "network_difficulty", None))
             if nd and (net_live is None or nd > net_live):
                 net_live = nd
+            if nd:
+                net_by_miner[m["id"]] = nd
+            coin_by_miner[m["id"]], _ = coin_mod.classify(m, sample, references)
 
         # share_seq source, per miner: prefer the live per-share counter
         # (AxeOS: +1 per submitted share) and fall back to the poller's
@@ -172,8 +199,6 @@ def build_halo_payload(
                 except (TypeError, ValueError):
                     pass
 
-    net_diff = net_live or _num(net_diff_fallback) or DEFAULT_NET_DIFF
-
     session = best.get("session") or {}
     alltime = best.get("alltime") or {}
     best_diff = _num(session.get("value")) or 0.0
@@ -182,7 +207,24 @@ def build_halo_payload(
     top = [_num(r.get("value")) or 0.0 for r in (top_records or [])][:3]
     top += [0.0] * (3 - len(top))
 
-    last_diff, miner_name = _pick_last_share(live_shares, latest_share, best_diff, session)
+    last_diff, miner_name, last_miner_id = _pick_last_share(
+        live_shares, latest_share, best_diff, session
+    )
+
+    # The gauge draws last_diff against net_diff, so the two have to belong
+    # to the same chain. On a fleet split across BTC and BCH the old rule —
+    # take the highest difficulty anywhere in the fleet — always picked BTC
+    # and made every BCH share look ~1000× further from a block than it was.
+    # Prefer the difficulty of the miner that produced the share we're
+    # showing: its own stratum reading first, then its coin's reference.
+    net_diff: float | None = None
+    if last_miner_id is not None:
+        net_diff = net_by_miner.get(last_miner_id)
+        if net_diff is None:
+            last_coin = coin_by_miner.get(last_miner_id)
+            if last_coin:
+                net_diff = _num(references.get(last_coin))
+    net_diff = net_diff or net_live or _num(net_diff_fallback) or DEFAULT_NET_DIFF
 
     payload: dict[str, Any] = {
         "last_diff": last_diff,

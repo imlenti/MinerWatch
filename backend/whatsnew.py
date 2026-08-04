@@ -10,6 +10,12 @@ detail. We surface only the bold leads (plus the first sentence of the
 detail as a one-line body) — the full changelog stays one click away
 on GitHub.
 
+One exception: when a release has a *single* note, its detail is shown
+in full. The teaser rules exist so a dialog listing several changes
+doesn't turn into the changelog itself; with one item there is nothing
+to keep short, and a release whose only note is an announcement has to
+be readable without leaving the app.
+
 No new data source, no cloud: the file is read from the repo root at
 runtime (the Dockerfile ships it next to VERSION). A missing file or a
 version without bold leads degrades to a single generic "Bug fixes and
@@ -45,23 +51,34 @@ def parse_changelog_highlights(text: str, version: str) -> list[dict[str, str]]:
     sentence of the detail, truncated, as ``body``. Bullets without a
     bold lead are skipped. Returns [] when the section is missing or
     has no conforming bullets — the caller decides the fallback.
+
+    The body is the first sentence, truncated, when the release has
+    several notes; when it has exactly one, the whole detail is kept so
+    the dialog can show it in full (see the module docstring).
     """
     section = _version_section(text, version)
     if not section:
         return []
 
-    highlights: list[dict[str, str]] = []
+    parsed: list[tuple[str, str]] = []
     for chunk in re.split(r"\n- ", section):
         match = re.match(r"\s*\*\*(.+?)\*\*\s*(.*)", chunk, flags=re.S)
         if not match:
             continue
         title = _strip_markdown(match.group(1)).strip().rstrip(".")
-        body = _first_sentence(match.group(2))
         if title:
-            highlights.append({"title": title, "body": body})
-        if len(highlights) >= MAX_HIGHLIGHTS:
+            parsed.append((title, match.group(2)))
+        if len(parsed) >= MAX_HIGHLIGHTS:
             break
-    return highlights
+
+    keep_whole = len(parsed) == 1
+    return [
+        {
+            "title": title,
+            "body": _flatten(detail) if keep_whole else _first_sentence(detail),
+        }
+        for title, detail in parsed
+    ]
 
 
 def _version_section(text: str, version: str) -> str:
@@ -81,11 +98,20 @@ def _strip_markdown(text: str) -> str:
     return re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
 
 
+def _flatten(detail: str) -> str:
+    """The whole bullet detail as one paragraph, unshortened.
+
+    Markdown stripped and hard-wrap newlines collapsed to spaces, since
+    the dialog renders plain text and wraps it itself.
+    """
+    return re.sub(r"\s+", " ", _strip_markdown(detail)).strip()
+
+
 def _first_sentence(detail: str) -> str:
     """First sentence of the bullet detail, whitespace-collapsed and
     capped at MAX_BODY_CHARS. Good enough for a one-line teaser; the
     full text lives in the changelog link."""
-    flat = re.sub(r"\s+", " ", _strip_markdown(detail)).strip()
+    flat = _flatten(detail)
     if not flat:
         return ""
     sentence = flat.split(". ", 1)[0].strip()

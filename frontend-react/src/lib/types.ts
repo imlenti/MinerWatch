@@ -42,6 +42,10 @@ export interface MinerRecord {
   // Cached display name of the assigned sensor, so the room label stays
   // friendly even while that sensor is offline. Null when unassigned.
   ambient_sensor_name: string | null;
+  // Manually pinned SHA-256 chain for this miner. Null = auto-detect (the
+  // normal case; only firmware that reports no stratum difficulty on a
+  // pool with no coin hint ever needs this). See backend/coin.py.
+  coin_override: MinedCoin | null;
 }
 
 export interface MetricSample {
@@ -303,6 +307,14 @@ export interface PoolRow {
   ping_ms: number | null;
   // Ping packet-loss % — NerdQAxe only; null elsewhere.
   ping_loss: number | null;
+  // Which SHA-256 chain this miner's hashrate is going to, and how we
+  // worked it out. Null means we couldn't tell — the user can pin it
+  // from this table (POST /api/miners/{id}/coin). See backend/coin.py.
+  coin: MinedCoin | null;
+  coin_source: CoinSource | null;
+  // The stored manual override, echoed so the UI can show whether the
+  // current answer is pinned or detected. Null = auto-detect.
+  coin_override: MinedCoin | null;
 }
 
 export interface PoolsResponse {
@@ -416,21 +428,53 @@ export interface PredictionWindow {
   };
 }
 
-// Which coin the "Find a block (solo)" odds are computed against.
-// 'auto' = the coin the fleet is actually mining (network difficulty from
-// stratum); 'btc'/'bch' = that coin's live network difficulty from a public
-// explorer, so the user can compare odds across coins at the same hashrate.
-export type PredictionCoin = 'auto' | 'btc' | 'bch';
+// A SHA-256 chain MinerWatch can tell miners apart by.
+export type MinedCoin = 'btc' | 'bch';
+
+// How a miner's coin was determined, in descending order of trust:
+// the user pinned it; the miner reported the network difficulty it mines
+// against; the pool payout address named its chain; the pool hostname did.
+export type CoinSource = 'override' | 'stratum' | 'address' | 'pool';
+
+// Mode of the "Find a block (solo)" widget.
+//   'auto'      — the real odds, one estimate per coin actually being mined
+//                 (see `groups`), each from that coin's own hashrate.
+//   'btc'/'bch' — a what-if: the WHOLE fleet's hashrate against that coin's
+//                 difficulty, for comparing "what if I moved everything".
+export type PredictionCoin = 'auto' | MinedCoin;
+
+// One coin's slice of the fleet. `coin: null` is the group of miners we
+// couldn't classify — it reports hashrate but never odds, and its hashrate
+// is deliberately not folded into any real coin's estimate.
+export interface PredictionGroup {
+  coin: MinedCoin | null;
+  label: string | null;
+  ticker: string | null;
+  hashrate_ths: number;
+  miner_count: number;
+  miner_ids: number[];
+  coin_sources: CoinSource[];
+  network_difficulty: number | null;
+  // 'stratum' = reported by this group's own miners (preferred);
+  // 'explorer' = this coin's reference difficulty from a public API.
+  difficulty_source: 'stratum' | 'explorer' | null;
+  find_block: PredictionWindow | null;
+}
 
 export interface PredictionResponse {
   fleet_hashrate_ths: number | null;
   best_alltime: BestRecord | null;
   network_difficulty: number | null;
-  // Echo of the coin the backend used for find_block. Optional for
-  // backward-compat with older payloads that didn't include it.
+  // Echo of the mode the backend answered in. Optional for backward-compat
+  // with older payloads that didn't include it.
   coin?: PredictionCoin;
+  // Per-coin breakdown. Optional so a newer frontend still renders against
+  // an older backend that only knows the flat `predictions` shape.
+  groups?: PredictionGroup[];
   predictions: {
     beat_best: PredictionWindow | null;
+    // Headline figure: the dominant group in 'auto' mode, the what-if in
+    // forced mode. Retained for backward compatibility with `groups`.
     find_block: PredictionWindow | null;
   };
 }

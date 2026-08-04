@@ -31,6 +31,19 @@ import type { DonationMinerRow, StartDonationResponse } from '@/lib/types';
 //   3. Start a donation — pick miners + hours, then Donate
 //   4. Active donations — live table with per-row STOP
 // See docs/donate-hashrate-design.md.
+//
+// Sections 2 and 3 are currently hidden — see SHOW_HASHRATE_DONATION.
+
+// Hashrate donation is hidden for now: donating hashrate is a solo-mining
+// lottery that usually pays the project nothing, so the page asks for
+// Bitcoin instead, which is what actually keeps development going.
+//
+// Kept behind a flag rather than deleted, in the same spirit as the
+// retained-but-unmounted DonateDialog: flip this to `true` to bring both
+// sections back, no rebuilding required. The backend endpoints and the
+// donation controller are untouched, so donations already in flight keep
+// running and keep reverting on schedule.
+const SHOW_HASHRATE_DONATION = false;
 
 export function DonationsPage() {
   const { data: info } = useDonationInfo();
@@ -101,11 +114,11 @@ export function DonationsPage() {
           Donations
         </h1>
         <p className="text-sm text-muted-foreground">
-          Support MinerWatch with Bitcoin — or lend it your hashrate for a while.
+          Support MinerWatch with Bitcoin.
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className={cn('grid gap-6', SHOW_HASHRATE_DONATION && 'lg:grid-cols-2')}>
         {/* 1. BTC donation */}
         <Card>
           <CardHeader>
@@ -120,6 +133,7 @@ export function DonationsPage() {
         </Card>
 
         {/* 2. How it works */}
+        {SHOW_HASHRATE_DONATION && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -168,9 +182,11 @@ export function DonationsPage() {
             </p>
           </CardContent>
         </Card>
+        )}
       </div>
 
       {/* 3. Start a donation */}
+      {SHOW_HASHRATE_DONATION && (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Start a donation</CardTitle>
@@ -292,8 +308,13 @@ export function DonationsPage() {
           {result && <StartResultSummary result={result} />}
         </CardContent>
       </Card>
+      )}
 
-      {/* 4. Active donations */}
+      {/* 4. Active donations — still shown while any donation is in flight,
+          even with the sections above hidden, so nobody is left mining to
+          the project address with no way to see it or stop it early. Once
+          the last one reverts, the card disappears with them. */}
+      {(SHOW_HASHRATE_DONATION || activeRows.length > 0) && (
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
           <div>
@@ -351,6 +372,7 @@ export function DonationsPage() {
           )}
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }
