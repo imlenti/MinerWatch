@@ -3,8 +3,8 @@
 
 Every driver inherits from :class:`base.MinerDriver` and implements
 at least ``poll()``. The registry maps the family name (``bitaxe``,
-``nerdoctaxe``, ``bitforge``, ``canaan``, ``braiins``, ``luxos``) to the
-driver class.
+``nerdoctaxe``, ``bitforge``, ``nmaxe``, ``canaan``, ``canaannano3``,
+``braiins``, ``luxos``) to the driver class.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from .nerdoctaxe import NerdOctaxeDriver
 from .bitforge import BitForgeDriver
 from .nmaxe import NmaxeDriver
 from .canaan import CanaanDriver
+from .canaannano3 import CanaanNano3Driver
 from .braiins import BraiinsDriver
 from .luxos import LuxosDriver
 
@@ -32,6 +33,9 @@ DRIVERS: dict[str, Type[MinerDriver]] = {
     # Fan + restart only; no MAC (identity keyed on host).
     "nmaxe": NmaxeDriver,
     "canaan": CanaanDriver,
+    # Original Avalon Nano 3 (not 3s): nano-cli worklevel / reboot,all
+    # dialect — see canaannano3.py.
+    "canaannano3": CanaanNano3Driver,
     "braiins": BraiinsDriver,
     "luxos": LuxosDriver,
 }
@@ -61,6 +65,7 @@ __all__ = [
     "BitForgeDriver",
     "NmaxeDriver",
     "CanaanDriver",
+    "CanaanNano3Driver",
     "BraiinsDriver",
     "LuxosDriver",
     "DRIVERS",

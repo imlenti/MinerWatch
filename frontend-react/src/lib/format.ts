@@ -117,9 +117,16 @@ export const FAMILY_LABEL: Record<string, string> = {
   bitforge: 'BitForge',
   nmaxe: 'NMAxe',
   canaan: 'Canaan / Avalon',
+  canaannano3: 'Canaan / Avalon Nano 3',
   braiins: 'Braiins / BMM',
   luxos: 'LuxOS (Antminer)',
 };
+
+/** Canaan Avalon family — Nano 3s / Q / A10 (`canaan`) and the original Nano 3. */
+export function isCanaanFamily(family: string | null | undefined): boolean {
+  const f = (family ?? '').toLowerCase();
+  return f === 'canaan' || f === 'canaannano3';
+}
 
 // Dual-fan labelling for the NerdQAxe / NerdOctaxe family. Both boards run
 // the same firmware and expose two fan channels — `fanrpm`/`fanspeed`

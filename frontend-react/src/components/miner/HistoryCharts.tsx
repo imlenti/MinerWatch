@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { fmtNum } from '@/lib/format';
+import { fmtNum, isCanaanFamily } from '@/lib/format';
 import {
   useAmbientHistory,
   useAmbientTemp,
@@ -23,8 +23,8 @@ import {
 
 interface Props {
   minerId: number;
-  /** Miner family — canaan relabels the VR series: Avalon has no VR
-   *  sensor, the driver feeds the air outlet temp into temp_vr_c. */
+  /** Miner family — Canaan/Avalon relabels the VR series: those boards
+   *  have no VR sensor, the driver feeds the air outlet temp into temp_vr_c. */
   family?: string;
   /** Ambient sensor (room) assigned to this miner, or null. Its stored
    *  series is overlaid on the Temperature chart; null draws no line. */
@@ -76,7 +76,7 @@ const TOOLTIP_CONTENT_STYLE = {
  */
 export function HistoryCharts({ minerId, family, ambientSensorId, ambientSensorName }: Props) {
   const [range, setRange] = useState(86400);
-  const vrSeriesLabel = family === 'canaan' ? 'Air out' : 'VR';
+  const vrSeriesLabel = isCanaanFamily(family) ? 'Air out' : 'VR';
 
   // The visible window is [now - range, now]. We hold `now` in state and only
   // advance it on a fixed cadence instead of recomputing it every render —

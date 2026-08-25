@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { fmtDifficulty, fmtNum, fmtUptime, nerdFanLabels, tempTone } from '@/lib/format';
+import { fmtDifficulty, fmtNum, fmtUptime, nerdFanLabels, tempTone, isCanaanFamily } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { LiveSample, MetricSample, MinerDetailResponse } from '@/lib/types';
 
@@ -46,7 +46,7 @@ export function LiveStats({ data }: Props) {
   };
 
   const family = data.miner.family;
-  const vrLabel = family === 'canaan' ? 'Air outlet temp' : 'Temp VR';
+  const vrLabel = isCanaanFamily(family) ? 'Air outlet temp' : 'Temp VR';
 
   const hashrate = v('hashrate_ths') as number | null;
   // In standby fix6 keeps power / VR / current live (real idle values) and
@@ -122,7 +122,7 @@ export function LiveStats({ data }: Props) {
       value: <NumberCell value={fmtNum(tempIn, 1)} unit="°C" />,
     });
   }
-  if (family !== 'canaan' && tempOut !== null && tempOut !== undefined) {
+  if (!isCanaanFamily(family) && tempOut !== null && tempOut !== undefined) {
     rows.push({
       label: 'Air outlet temp',
       value: <NumberCell value={fmtNum(tempOut, 1)} unit="°C" />,

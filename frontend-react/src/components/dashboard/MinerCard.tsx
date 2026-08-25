@@ -3,7 +3,7 @@ import { BellOff } from 'lucide-react';
 
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { fmtNum, fmtRelative, fmtUptime, tempTone, FAMILY_LABEL } from '@/lib/format';
+import { fmtNum, fmtRelative, fmtUptime, tempTone, FAMILY_LABEL, isCanaanFamily } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { MinerListEntry } from '@/lib/types';
 
@@ -97,8 +97,8 @@ export function MinerCard({ miner }: Props) {
               the tile relabels it. The full wording lives on the miner
               page (Live stats / Hardware) and in the hover tooltip. */}
           <Metric
-            label={miner.family === 'canaan' ? 'Air out' : 'VR'}
-            title={miner.family === 'canaan' ? 'Air outlet temperature — Avalon reports no VR sensor' : undefined}
+            label={isCanaanFamily(miner.family) ? 'Air out' : 'VR'}
+            title={isCanaanFamily(miner.family) ? 'Air outlet temperature — Avalon reports no VR sensor' : undefined}
             value={offline ? '—' : fmtNum(lm?.temp_vr_c, 1)}
             unit="°C"
             tone={offline ? undefined : tempTone(lm?.temp_vr_c)}
