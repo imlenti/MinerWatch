@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Original Avalon Nano 3 support.** The original Nano 3 (not the Nano 3s)
+  speaks the older nano-cli dialect on port 4028: work level via
+  `ascset worklevel` (Low/Mid/High) and reboot via `ascset reboot,all`.
+  Fan / frequency / voltage writes stay hidden. Auto-discovery fingerprints
+  `MODEL=nano3` / `SWTYPE=MM318` / estats `Ver[nano3-…]` so a Nano 3s is
+  never driven with this dialect.
+
 ## [1.19.6] — 2026-08-04
 
 - **IMPORTANT: the development of MinerWatch is coming to a stop.** No donations
