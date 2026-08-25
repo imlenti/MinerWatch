@@ -2,7 +2,7 @@ import { Flame } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import type { MinerListEntry, SettingsCurrent } from '@/lib/types';
-import { fmtNum } from '@/lib/format';
+import { fmtNum, isCanaanFamily } from '@/lib/format';
 
 interface Props {
   miners: MinerListEntry[];
@@ -38,7 +38,7 @@ export function CriticalBanner({ miners, settings }: Props) {
     if (lm.temp_vr_c !== null && lm.temp_vr_c !== undefined && lm.temp_vr_c >= vrMax) {
       // Avalon (canaan) has no VR sensor — temp_vr_c carries the air
       // outlet temp, so the wording follows (same as the miner tiles).
-      probs.push(`${m.family === 'canaan' ? 'air out' : 'VR'} ${fmtNum(lm.temp_vr_c, 1)}°C ≥ ${vrMax}°C`);
+      probs.push(`${isCanaanFamily(m.family) ? 'air out' : 'VR'} ${fmtNum(lm.temp_vr_c, 1)}°C ≥ ${vrMax}°C`);
     }
     if (probs.length) hot.push({ id: m.id, name: m.name, problems: probs });
   }

@@ -63,10 +63,11 @@ function modeLabels(_model: string | null | undefined): [string, string, string]
 /**
  * Controls tab — Avalon work mode (Low / Mid / High).
  *
- * This issues the firmware's own ``ascset 0,workmode,set,N`` — the exact
- * command the Avalon app sends — so it stays inside the vendor's blessed
- * presets rather than poking raw frequency/voltage. The change applies
- * immediately; unlike a pool change it needs no reboot.
+ * This issues the firmware's own work-mode preset — ``ascset
+ * 0,workmode,set,N`` on the Nano 3s / later Avalon, ``ascset
+ * 0,worklevel,set,N`` on the original Nano 3 — so it stays inside the
+ * vendor's blessed presets rather than poking raw frequency/voltage.
+ * The change applies immediately; unlike a pool change it needs no reboot.
  *
  * Self-hides on families that don't advertise the capability.
  */

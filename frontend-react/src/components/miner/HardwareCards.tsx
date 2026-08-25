@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { fmtNum, fmtUptime, tempTone, nerdFanLabels, FAMILY_LABEL } from '@/lib/format';
+import { fmtNum, fmtUptime, tempTone, nerdFanLabels, FAMILY_LABEL, isCanaanFamily } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { MinerDetailResponse } from '@/lib/types';
 
@@ -165,11 +165,11 @@ export function HardwareCards({ data }: Props) {
   const thermal: Row[] = [
     ...chipTempRows,
     { label: 'Average chip temp', value: tempCell(tAvg) },
-    { label: miner.family === 'canaan' ? 'Air outlet temp' : 'VR temp', value: tempCell(tVr) },
+    { label: isCanaanFamily(miner.family) ? 'Air outlet temp' : 'VR temp', value: tempCell(tVr) },
     { label: 'Air inlet temp', value: tempCell(tIn) },
     {
       label: 'Air outlet temp',
-      value: miner.family !== 'canaan' ? tempCell(tOut) : null,
+      value: !isCanaanFamily(miner.family) ? tempCell(tOut) : null,
     },
     { label: 'Target temp', value: target ? `${fmtNum(target, 1)} °C` : null },
   ];

@@ -185,6 +185,7 @@ comfortable opening a terminal but not necessarily developers.
 | BitForge          | BitForge Nano (forge-os firmware)          | HTTP REST :80 (Bitaxe-compatible) | Full       |
 | NMAxe             | NMAxe (BM1366), NMAxeGamma, NMQAxe++        | HTTP REST :80 (AxeOS fork)        | Fan + restart |
 | Canaan Avalon     | Nano 3s                                     | TCP cgminer-text :4028           | Full       |
+| Canaan Avalon     | Nano 3 (original)                           | TCP cgminer-text :4028           | Work mode + restart |
 | Braiins           | BMM 101 (BOSminer firmware)                | TCP cgminer-JSON :4028           | Full       |
 | LuxOS (Luxor)     | Bitmain Antminer S19 / S21, MicroBT Whatsminer | TCP cgminer-JSON :4028        | Monitor only |
 
@@ -206,12 +207,20 @@ auto-detects it from its `/probe` endpoint and maps the nested payload
 onto the standard readouts. Control is limited to fan (auto + manual)
 and restart.
 
+The original **Avalon Nano 3** (not the Nano 3s) is a separate Canaan
+family (`canaannano3`). It speaks the older nano-cli dialect on port
+4028: work level via `ascset worklevel` (Low/Mid/High) and reboot via
+`ascset reboot,all`. Fan / frequency / voltage writes are Nano 3s-only
+and stay hidden. Auto-discovery fingerprints `MODEL=nano3` (or
+`SWTYPE=MM318`) so a Nano 3s is never driven with this dialect.
+
 **LuxOS is monitoring-only for now.** MinerWatch reads hashrate, temps,
 fans, power and pools from LuxOS-flashed Antminer/Whatsminer rigs, but
 exposes no control buttons — LuxOS write commands need a stateful
 session that's intentionally left for a later release. The other
-families (Bitaxe, Nerd*, BitForge, Canaan, Braiins) support full fan /
-frequency / voltage / restart control; **NMAxe** is fan + restart only.
+families (Bitaxe, Nerd*, BitForge, Canaan Nano 3s, Braiins) support full
+fan / frequency / voltage / restart control; **NMAxe** is fan + restart
+only; **Avalon Nano 3** is work mode + restart.
 
 Adding a new model usually means a single new file in `backend/miners/`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the driver template.

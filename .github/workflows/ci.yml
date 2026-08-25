@@ -59,6 +59,7 @@ jobs:
             backend/miners/bitaxe.py \
             backend/miners/braiins.py \
             backend/miners/canaan.py \
+            backend/miners/canaannano3.py \
             backend/miners/cgminer_client.py
 
       - name: Import the FastAPI app (smoke test)

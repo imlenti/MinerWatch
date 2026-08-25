@@ -22,7 +22,14 @@ from typing import Iterable
 
 from .config import get_config
 from . import db
-from .miners import BitaxeDriver, BraiinsDriver, CanaanDriver, LuxosDriver, NmaxeDriver
+from .miners import (
+    BitaxeDriver,
+    BraiinsDriver,
+    CanaanDriver,
+    CanaanNano3Driver,
+    LuxosDriver,
+    NmaxeDriver,
+)
 from .miners.cgminer_client import CgminerClient, CgminerError
 
 log = logging.getLogger("minerwatch.discovery")
@@ -247,7 +254,10 @@ async def _cgminer_fingerprint(host: str, timeout: float = 2.0) -> str | None:
          → ``"luxos"``
       2. ``BOSminer`` / ``BOSminer+`` (or any key matching ``bos`` or
          ``braiins``) → ``"braiins"``
-      3. Neither → assume ``"canaan"`` (catch-all for cgminer-on-:4028
+      3. ``MODEL=nano3`` / ``PROD=Avalonnano`` / ``SWTYPE=MM318``
+         (the original Avalon Nano 3, nano-cli dialect) →
+         ``"canaannano3"``. ``nano3s`` must not match here.
+      4. Neither → assume ``"canaan"`` (catch-all for cgminer-on-:4028
          without a distinctive firmware marker). Avalon Nano 3s replies
          to ``version`` with ``CGMiner``/``Miner`` only, so this is the
          correct bucket for it too.
@@ -280,7 +290,65 @@ async def _cgminer_fingerprint(host: str, timeout: float = 2.0) -> str | None:
         return "luxos"
     if any("bos" in k or "braiins" in k for k in keys_lower):
         return "braiins"
+    if _is_avalon_nano3(v_dict):
+        return "canaannano3"
+    # Some Avalon builds omit MODEL on ``version`` and only stamp
+    # ``Ver[nano3-…]`` / ``Ver[Nano3s-…]`` inside estats. Peek before
+    # falling through to the Nano 3s catch-all — otherwise an original
+    # Nano 3 is stored as ``canaan`` and ``workmode`` is rejected.
+    if await _estats_says_nano3(cli):
+        return "canaannano3"
     return "canaan"
+
+
+def _nano3_marker(text: str) -> bool | None:
+    """Classify a firmware string as original Nano 3 / Nano 3s / unknown.
+
+    ``nano3s`` is checked first because it contains the ``nano3`` prefix.
+    Real boards report ``MODEL=nano3`` and ``Ver[nano3-24071801_…]``.
+    """
+    blob = (text or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+    if not blob:
+        return None
+    if "nano3s" in blob:
+        return False
+    if "nano3" in blob:
+        return True
+    return None
+
+
+def _is_avalon_nano3(v_dict: dict) -> bool:
+    """True for the original Avalon Nano 3 (not Nano 3s / Q / Mini 3).
+
+    Real ``version`` payload (cgminer 4.11.1): ``MODEL=nano3``,
+    ``PROD=Avalonnano``, ``SWTYPE=MM318_X2``. Nano 3s is MM319 /
+    ``nano3s`` and must stay on the generic ``canaan`` driver.
+    """
+    swtype = str(v_dict.get("SWTYPE") or "").strip().upper()
+    joined = " ".join(str(v) for v in v_dict.values() if v is not None)
+    marker = _nano3_marker(joined)
+    if marker is False:
+        return False
+    if marker is True:
+        return True
+    return swtype.startswith("MM318")
+
+
+async def _estats_says_nano3(cli: CgminerClient) -> bool:
+    """True when estats ``Ver[…]`` names the original Nano 3."""
+    try:
+        stats = await cli.call("estats")
+    except (CgminerError, OSError, asyncio.TimeoutError):
+        return False
+    section = stats.get("STATS")
+    if isinstance(section, list) and section:
+        section = section[0] if isinstance(section[0], dict) else {}
+    if not isinstance(section, dict):
+        return False
+    for key, value in section.items():
+        if isinstance(key, str) and key.startswith("MM ID") and isinstance(value, str):
+            return _nano3_marker(value) is True
+    return False
 
 
 async def _identify_cgminer(host: str) -> dict | None:
@@ -296,11 +364,13 @@ async def _identify_cgminer(host: str) -> dict | None:
     if family is None:
         return None
 
-    drv: LuxosDriver | BraiinsDriver | CanaanDriver
+    drv: LuxosDriver | BraiinsDriver | CanaanDriver | CanaanNano3Driver
     if family == "luxos":
         drv = LuxosDriver(host=host, timeout=2)
     elif family == "braiins":
         drv = BraiinsDriver(host=host, timeout=2)
+    elif family == "canaannano3":
+        drv = CanaanNano3Driver(host=host, timeout=2)
     else:  # canaan / fallback
         drv = CanaanDriver(host=host, timeout=2)
 
@@ -334,6 +404,7 @@ def _default_model(family: str) -> str:
         "luxos": "LuxOS",
         "braiins": "BMM101",
         "canaan": "Avalon",
+        "canaannano3": "Avalon Nano 3",
     }.get(family, family.title())
 
 
