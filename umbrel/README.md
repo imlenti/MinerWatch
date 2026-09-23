@@ -23,12 +23,24 @@ miners, and afterwards reach each miner directly on its LAN IP (e.g.
 internal subnet and can't reach `192.168.x.x`, which breaks both
 discovery and polling.
 
-Umbrel's `app_proxy` still routes the app's UI normally; it just
-forwards to `127.0.0.1:8000` on the host instead of an internal
-service IP. The user-facing experience (clicking "Open" in the Umbrel
-dashboard) is identical to any other app.
+Umbrel's `app_proxy` still routes the app's UI normally on the manifest
+port (8000); it just forwards to the host port `web` binds (8765) at
+`$GATEWAY_IP`, the Umbrel host's address on its internal Docker network
+(10.21.0.1), instead of an internal service IP. That address works both
+when the proxy is a sidecar container (umbrelOS 1.x) and when umbreld
+proxies the port itself (umbrelOS 2.0, which no longer creates the
+`app_proxy` container). The user-facing experience (clicking "Open" in
+the Umbrel dashboard) is identical to any other app.
 
-The price of host networking is one reserved port on the host: 8000.
+The desktop widgets need one more hop: umbreld fetches widget data from
+a container IP on Umbrel's Docker network, which a host-networked `web`
+doesn't have (and umbrelOS 2.0 no longer creates an `app_proxy`
+container to borrow one from). The small `widgets` service in
+`docker-compose.yml`, a stdlib-only TCP relay running from the same
+MinerWatch image, provides that IP and forwards to `$GATEWAY_IP:8765`.
+The manifest's widget endpoints point at it (`widgets:8765/...`).
+
+The price of host networking is one reserved port on the host: 8765.
 If that port is already taken, change `MINERWATCH_PORT` in the
 `environment` block and update `app_proxy.APP_PORT` to match.
 

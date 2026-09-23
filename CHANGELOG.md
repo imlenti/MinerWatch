@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.7] — 2026-09-23
+
+### Fixed
+
+- **MinerWatch opens again on umbrelOS 2.0.** umbrelOS 2.0 no longer runs a
+  separate `app_proxy` container: umbreld now serves the app's port itself,
+  from the host. MinerWatch pointed its proxy at `host.docker.internal`, a name
+  that only existed inside the old container, so umbreld could never reach the
+  app and never opened port 8000. The browser showed "connection refused" even
+  though MinerWatch itself was still running on port 8765. The proxy now
+  targets `$GATEWAY_IP`, the Umbrel host's address on its internal network,
+  which works on both umbrelOS 1.x and 2.0.
+- **Umbrel home-screen widgets show data again on umbrelOS 2.0.** umbreld
+  fetches widget data from a container on Umbrel's internal network, and the
+  widgets used to go through the `app_proxy` container, which umbrelOS 2.0 no
+  longer creates. A tiny relay service now gives them that address and forwards
+  to MinerWatch on the host. It reuses the MinerWatch image, so there is nothing
+  extra to download.
+
 ## [1.19.6] — 2026-08-04
 
 - **IMPORTANT: the development of MinerWatch is coming to a stop.** No donations

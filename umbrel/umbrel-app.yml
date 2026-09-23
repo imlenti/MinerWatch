@@ -60,15 +60,16 @@ path: ""
 defaultUsername: ""
 defaultPassword: ""
 torOnly: false
-# Desktop widgets. The endpoint host must be a compose service with a
-# bridge-network IP (umbreld resolves it via docker inspect). `web` is
-# host-networked, so we go through app_proxy, which listens on the
-# manifest port and forwards to the host-bound web service.
+# Desktop widgets. The endpoint host must be a compose service with an IP on
+# Umbrel's Docker network (umbreld resolves it via docker inspect). `web` is
+# host-networked and has none, and umbrelOS 2.0 no longer creates an app_proxy
+# container, so the endpoints go through the small `widgets` relay service
+# (see docker-compose.yml), which forwards to web on the host.
 widgets:
   - id: "fleet"
     type: "four-stats"
     refresh: "5s"
-    endpoint: "app_proxy:8000/api/widgets/fleet"
+    endpoint: "widgets:8765/api/widgets/fleet"
     link: ""
     example:
       type: "four-stats"
@@ -88,7 +89,7 @@ widgets:
   - id: "miners"
     type: "list"
     refresh: "5s"
-    endpoint: "app_proxy:8000/api/widgets/miners"
+    endpoint: "widgets:8765/api/widgets/miners"
     link: ""
     example:
       type: "list"

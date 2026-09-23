@@ -31,7 +31,9 @@ matches the same number in the dashboard.
 Plumbing note: umbreld resolves the manifest ``endpoint`` hostname as a
 compose *service name* and fetches its bridge-network IP. MinerWatch's
 ``web`` service is host-networked (no bridge IP), so the manifest points
-at ``app_proxy:8000`` which already forwards to the host port. The two
+at ``widgets:8765``, a small relay service in the Umbrel compose that
+forwards to the host port. (It used to be ``app_proxy:8000``, but
+umbrelOS 2.0 no longer runs app_proxy as a container.) The two
 endpoints are auth-exempt (see ``auth.public_paths``) because umbreld
 fetches without a session cookie; they expose only coarse fleet numbers.
 """

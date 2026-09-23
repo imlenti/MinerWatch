@@ -23,12 +23,24 @@
 #   * the proxy forwards to that port.
 # 8000 ≠ 8765, so there's no contention for the host port.
 #
-# The proxy stays on Umbrel's bridge network (it MUST, so Umbrel's reverse
-# proxy / Tor can route to it by container name). A bridge container can't
-# reach a host-networked service via 127.0.0.1 (that's its own loopback), so we
-# point it at the host through `host.docker.internal` (mapped to the host
-# gateway via extra_hosts). Path: Umbrel → app_proxy (bridge, :8000) →
-# host.docker.internal:8765 → web (host net).
+# The proxy must reach `web` at an address that means "the Umbrel host" from
+# wherever the proxy itself runs:
+#   * umbrelOS 1.x runs app_proxy as a sidecar container on Umbrel's bridge
+#     network (umbrel_main_network). There 127.0.0.1 is the container's own
+#     loopback, so it can't be used.
+#   * umbrelOS 2.0 dropped the sidecar: umbreld serves the manifest port itself,
+#     from the host, reading APP_HOST / APP_PORT out of the app_proxy block
+#     below. No container is created, so extra_hosts entries never apply and a
+#     name like host.docker.internal doesn't resolve. umbreld then keeps waiting
+#     for the target, never opens the manifest port, and the browser gets
+#     "connection refused".
+# $GATEWAY_IP (10.21.0.1, the host's address on umbrel_main_network) is
+# exported by umbrelOS to every app compose in both versions and is reachable
+# from both places. Path: Umbrel → app_proxy (:8000) → $GATEWAY_IP:8765 →
+# web (host net).
+#
+# The desktop widgets need one more hop, handled by the small `widgets` relay
+# service at the bottom of this file (see the comment there).
 #
 # If 8000 or 8765 is already taken on your umbrelOS box, change the manifest
 # `port` (umbrel-app.yml) and/or MINERWATCH_PORT + APP_PORT below to match.
@@ -38,17 +50,14 @@ version: "3.7"
 services:
   app_proxy:
     environment:
-      # `web` is on the host network, so it isn't reachable by container name
-      # nor via the proxy's own 127.0.0.1. Reach the host instead.
-      APP_HOST: host.docker.internal
+      # `web` is on the host network, so it has no container name to resolve.
+      # Reach the Umbrel host through its umbrel_main_network address, which
+      # works for the 1.x sidecar and for umbreld's own proxy in 2.0 (see the
+      # header comment).
+      APP_HOST: $GATEWAY_IP
       # Upstream port = the host port `web` actually binds (see MINERWATCH_PORT).
       APP_PORT: 8765
       PROXY_AUTH_ADD: "false"
-    # Map host.docker.internal to the host gateway so the bridge-networked
-    # proxy can reach the host-networked `web`. Requires Docker >= 20.10
-    # (umbrelOS ships a newer Docker, so this is satisfied).
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   web:
     image: ghcr.io/imlenti/minerwatch:1.19.6
@@ -74,6 +83,87 @@ services:
 
     healthcheck:
       test: ["CMD", "python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('MINERWATCH_PORT', '8000') + '/api/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # Relay for the umbrelOS desktop widgets.
+  #
+  # umbreld fetches a widget's data by resolving the manifest `endpoint` host as
+  # a compose service and reading that container's IP on Umbrel's Docker
+  # network. `web` is host-networked, so it has no such IP, and umbrelOS 2.0 no
+  # longer creates an app_proxy container the endpoints could go through. This
+  # service gives the widgets that address: it listens on its own :8765 and
+  # forwards every connection to `web` on the host ($GATEWAY_IP:8765, the same
+  # path the app proxy uses). It reuses the MinerWatch image, which is already
+  # on disk, and runs a small stdlib-only TCP relay instead of the app, so there
+  # is nothing extra to download. It works the same way on umbrelOS 1.x.
+  widgets:
+    image: ghcr.io/imlenti/minerwatch:1.19.6
+    restart: on-failure
+    user: "1000:1000"
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        import asyncio
+        import os
+        import signal
+
+        TARGET_HOST = os.environ["RELAY_TARGET_HOST"]
+        TARGET_PORT = int(os.environ["RELAY_TARGET_PORT"])
+        LISTEN_PORT = int(os.environ["RELAY_LISTEN_PORT"])
+
+
+        async def pump(reader, writer):
+            try:
+                while data := await reader.read(65536):
+                    writer.write(data)
+                    await writer.drain()
+                if writer.can_write_eof():
+                    writer.write_eof()
+            except OSError:
+                pass
+
+
+        async def handle(client_reader, client_writer):
+            try:
+                upstream_reader, upstream_writer = await asyncio.wait_for(
+                    asyncio.open_connection(TARGET_HOST, TARGET_PORT), timeout=5
+                )
+            except (OSError, asyncio.TimeoutError):
+                client_writer.close()
+                return
+            try:
+                await asyncio.gather(
+                    pump(client_reader, upstream_writer),
+                    pump(upstream_reader, client_writer),
+                )
+            finally:
+                upstream_writer.close()
+                client_writer.close()
+
+
+        async def main():
+            stop = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, stop.set)
+            server = await asyncio.start_server(handle, "0.0.0.0", LISTEN_PORT)
+            print(f"widgets relay: :{LISTEN_PORT} -> {TARGET_HOST}:{TARGET_PORT}", flush=True)
+            await stop.wait()
+            server.close()
+
+
+        asyncio.run(main())
+    environment:
+      RELAY_TARGET_HOST: $GATEWAY_IP
+      RELAY_TARGET_PORT: "8765"
+      RELAY_LISTEN_PORT: "8765"
+    # End-to-end check: the probe goes through the relay to web's /api/health,
+    # so an unreachable host path shows up as unhealthy.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=4)"]
       interval: 30s
       timeout: 5s
       start_period: 15s
