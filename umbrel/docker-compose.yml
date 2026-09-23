@@ -60,7 +60,7 @@ services:
       PROXY_AUTH_ADD: "false"
 
   web:
-    image: ghcr.io/imlenti/minerwatch:1.19.6
+    image: ghcr.io/imlenti/minerwatch:1.19.7
     # NOTE: no `user:` override. The image's entrypoint starts as root only to
     # fix ownership of the bind-mounted data dir, then drops to UID/GID 1000
     # itself (via gosu). Pinning `user:` here would prevent that chown and
@@ -100,7 +100,7 @@ services:
   # on disk, and runs a small stdlib-only TCP relay instead of the app, so there
   # is nothing extra to download. It works the same way on umbrelOS 1.x.
   widgets:
-    image: ghcr.io/imlenti/minerwatch:1.19.6
+    image: ghcr.io/imlenti/minerwatch:1.19.7
     restart: on-failure
     user: "1000:1000"
     entrypoint: ["python", "-c"]
