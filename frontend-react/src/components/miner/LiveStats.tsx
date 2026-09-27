@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { fmtDifficulty, fmtNum, fmtUptime, nerdFanLabels, tempTone } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { LiveSample, MetricSample, MinerDetailResponse } from '@/lib/types';
+import { ExternalLink } from 'lucide-react';
 
 interface Props {
   data: MinerDetailResponse;
@@ -394,6 +395,7 @@ function PoolCell({
   if (!url && !worker) {
     return <span className="text-muted-foreground">—</span>;
   }
+  const dashboardUrl = poolDashboardUrl(url, worker);
   return (
     <span className="flex flex-col">
       <span className="flex items-center gap-1.5 truncate text-foreground">
@@ -415,8 +417,35 @@ function PoolCell({
           {worker}
         </span>
       )}
+      {dashboardUrl && (
+        <a
+          className="mt-1 inline-flex items-center gap-1 text-[10px] font-normal text-primary hover:underline"
+          href={dashboardUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open pool dashboard
+          <ExternalLink className="h-2.5 w-2.5" />
+        </a>
+      )}
     </span>
   );
+}
+
+function poolDashboardUrl(url: string | null, worker: string | null): string | null {
+  if (!url || !worker) return null;
+
+  try {
+    const parsed = new URL(url.includes('://') ? url : `stratum://${url}`);
+    if (parsed.hostname.toLowerCase() !== 'stratum.btcpowlab-pool.com') return null;
+  } catch {
+    return null;
+  }
+
+  const wallet = worker.split('.')[0]?.trim();
+  if (!wallet) return null;
+
+  return `https://btcpowlab-pool.com/miner/${encodeURIComponent(wallet)}`;
 }
 
 function NumberCell({ value, unit, tone }: NumberCellProps) {
