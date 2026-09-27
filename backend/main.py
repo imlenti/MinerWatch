@@ -2075,6 +2075,7 @@ async def api_get_settings() -> dict:
             "storage": asdict(cfg.storage),
             "network": asdict(cfg.network),
             "auth_enabled": cfg.auth.enabled,
+            "guardian": asdict(cfg.guardian),
         },
         "stored": stored,
     }

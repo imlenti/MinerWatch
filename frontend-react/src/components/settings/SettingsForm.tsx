@@ -34,6 +34,7 @@ export interface SettingsFormState {
   scanCidr: string;
   authEnabled: boolean;
   authPassword: string; // write-only
+  guardianHashrateAverageWindow: number;
 }
 
 export function useSettingsForm(current: SettingsCurrent | null | undefined) {
@@ -65,6 +66,7 @@ export function useSettingsForm(current: SettingsCurrent | null | undefined) {
       scanCidr: current.network.scan_cidr,
       authEnabled: current.auth_enabled,
       authPassword: '',
+      guardianHashrateAverageWindow: current.guardian?.hashrate_average_window_seconds ?? 30,
     });
   }, [current]);
 
@@ -132,6 +134,7 @@ export function formToOverrides(form: SettingsFormState): Record<string, unknown
     'alerts.wallet_watch_dust_sats': Math.max(0, Math.round(form.walletDustSats) || 0),
     'network.scan_cidr': form.scanCidr,
     'auth.enabled': form.authEnabled,
+    'guardian.hashrate_average_window_seconds': form.guardianHashrateAverageWindow,
   };
   if (form.authPassword) overrides['auth.password'] = form.authPassword;
   if (form.telegramBotToken) overrides['alerts.telegram_bot_token'] = form.telegramBotToken;

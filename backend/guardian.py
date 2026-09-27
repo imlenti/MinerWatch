@@ -523,16 +523,47 @@ class GuardianController:
         # behaviour. In chip mode the chip is also driven by the fan PID and the
         # 75°C watchdog, so the governor only bites once the fan is saturated.
         source = "chip" if str(miner.get("guardian_temp_source") or "").lower() == "chip" else "vr"
-        temp_c = sample.temp_chip_c if source == "chip" else sample.temp_vr_c
         source_label = "Chip" if source == "chip" else "VR"
 
-        # Effective hashrate (TH/s) and the ASIC hardware-error counter — the
-        # signals behind the regression brake. ``hashrate_ths`` is AxeOS's
-        # reported (real) hashrate; ``hw_errors`` is the summed per-ASIC invalid-
-        # nonce count, which climbs when an overclock starts producing garbage
-        # (those bad nonces crater real hashrate but never reach the pool, so the
-        # reject-% term stays blind to them).
-        hashrate_ths = sample.hashrate_ths
+        # Fetch recent averages over the configured window to avoid transient dips/spikes
+        window = int(getattr(gcfg, "hashrate_average_window_seconds", 30))
+        avg_metrics = {}
+        if window > 0:
+            try:
+                avg_metrics = await db.get_recent_metrics_average(miner_id, window)
+            except Exception:
+                log.exception("guardian: failed to fetch recent averages for miner=%s", miner.get("name"))
+
+        # Fallback to instantaneous values if not found or window is 0
+        hashrate_ths = avg_metrics.get("hashrate_ths")
+        if hashrate_ths is None:
+            hashrate_ths = sample.hashrate_ths
+
+        temp_chip_c = avg_metrics.get("temp_chip_c")
+        if temp_chip_c is None:
+            temp_chip_c = sample.temp_chip_c
+
+        temp_vr_c = avg_metrics.get("temp_vr_c")
+        if temp_vr_c is None:
+            temp_vr_c = sample.temp_vr_c
+
+        power_w = avg_metrics.get("power_w")
+        if power_w is None:
+            power_w = sample.power_w
+
+        error_pct = avg_metrics.get("error_pct")
+        if error_pct is None:
+            error_pct = sample.error_pct
+
+        temp_c = temp_chip_c if source == "chip" else temp_vr_c
+
+        # Effective hashrate (TH/s) and the ASIC hardware-error percentage (error_pct)
+        # — the signals behind the regression brake.
+        #
+        # ``hashrate_ths`` is AxeOS's reported (real) hashrate.
+        # ``hw_errors`` is the cumulative summed per-ASIC invalid-nonce count, which climbs
+        # when an overclock starts producing garbage (cratering real hashrate while the
+        # pool-reject % stays blind). We track ``hw_errors`` as a delta for telemetry.
         hw_errors = sample.hw_errors
         err_delta = None
         if (
@@ -619,8 +650,8 @@ class GuardianController:
         )
         valid_hr = bool(can_validate and hashrate_ths >= expected_ths * float(gcfg.valid_pct))
         error_high = (
-            sample.error_pct is not None
-            and float(sample.error_pct) > float(gcfg.error_pct_max)
+            error_pct is not None
+            and float(error_pct) > float(gcfg.error_pct_max)
         )
         # Either signal means "unstable": back off (frequency-only) or cure with
         # voltage (co-tuner). The ASIC error % climbs when pushing frequency at
@@ -632,7 +663,7 @@ class GuardianController:
         )
         tele["expected_ths"] = round(expected_ths, 2) if expected_ths is not None else None
         tele["valid"] = valid_hr if can_validate else None
-        tele["error_pct"] = round(sample.error_pct, 2) if sample.error_pct is not None else None
+        tele["error_pct"] = round(error_pct, 2) if error_pct is not None else None
 
         # ---- Phase 2: voltage co-tuner path (per-miner opt-in) ----
         # When the voltage lever is enabled (global master + per-miner opt-in)
@@ -676,11 +707,11 @@ class GuardianController:
                     hashrate_invalid=hashrate_invalid,
                     valid=allow_up,
                     instability_label=instab_label,
-                    chip_c=sample.temp_chip_c,
+                    chip_c=temp_chip_c,
                     chip_cutoff_c=float(gcfg.chip_cutoff_c),
-                    vr_c=sample.temp_vr_c,
+                    vr_c=temp_vr_c,
                     vr_cutoff_c=float(gcfg.vr_cutoff_c),
-                    power_w=sample.power_w,
+                    power_w=power_w,
                     power_cutoff_w=power_cut,
                     vin_mv=sample.input_voltage_mv,
                     vin_min_mv=vin_lo,
@@ -853,10 +884,10 @@ class GuardianController:
         ``temp_c`` is the governed sensor's reading and ``source`` says which
         sensor it is ("vr" | "chip"), so the UI can label it correctly. The
         legacy ``vr_temp_c`` key is kept (populated only in VR mode) so any
-        older consumer keeps working. ``hashrate_ths`` / ``asic_errors`` are the
-        effective-hashrate and ASIC hardware-error readings the regression brake
-        watches; ``soft_ceiling`` is the in-memory cap pinned after a regression
-        (``ceiling`` already reflects it — this is for an explicit UI hint).
+        older consumer keeps working. ``hashrate_ths`` / ``error_pct`` / ``asic_errors`` are
+        the effective-hashrate, ASIC hardware-error percentage, and ASIC hardware-error
+        readings the regression brake watches; ``soft_ceiling`` is the in-memory cap pinned
+        after a regression (``ceiling`` already reflects it — this is for an explicit UI hint).
         """
         temp_r = round(temp_c, 1) if temp_c is not None else None
         self._status[miner_id] = {
